@@ -1,10 +1,14 @@
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const {
   Client,
   LocalAuth,
   MessageTypes
 } = require('whatsapp-web.js');
 const EventEmitter = require('events');
-const { formatPeerLabel } = require('../utils/format');
+const { formatPeerLabel, truncate } = require('../utils/format');
+const { displayBodyForParts } = require('../utils/messageFormat');
 
 async function resolveIncomingAuthor(msg, chat) {
   const isGroup = Boolean(chat && chat.isGroup);
@@ -21,7 +25,6 @@ async function resolveIncomingAuthor(msg, chat) {
   return formatPeerLabel(msg.author || msg.from);
 }
 
-/** Do not surface these as chat lines (noise / duplicate pipeline / non-user content). */
 const SUPPRESSED_MESSAGE_TYPES = new Set([
   MessageTypes.E2E_NOTIFICATION,
   MessageTypes.PROTOCOL,
@@ -42,13 +45,45 @@ function shouldEmitUserMessage(msg) {
   return true;
 }
 
+async function quotedSnippetFrom(msg) {
+  if (!msg.hasQuotedMsg) return '';
+  try {
+    const q = await msg.getQuotedMessage();
+    if (!q) return '';
+    const qb =
+      q.body != null && String(q.body).trim()
+        ? String(q.body).trim()
+        : displayBodyForParts(q.type, Boolean(q.hasMedia), q.body);
+    return truncate(qb, 40);
+  } catch (_) {
+    return '';
+  }
+}
+
+async function rowFromClientMessage(msg, chat) {
+  const author = msg.fromMe ? 'You' : await resolveIncomingAuthor(msg, chat);
+  const quotedSnippet = await quotedSnippetFrom(msg);
+  return {
+    id: msg.id._serialized,
+    body: msg.body,
+    displayBody: displayBodyForParts(msg.type, msg.hasMedia, msg.body),
+    fromMe: msg.fromMe,
+    author,
+    timestamp: msg.timestamp,
+    type: msg.type,
+    hasMedia: Boolean(msg.hasMedia),
+    hasQuotedMsg: Boolean(msg.hasQuotedMsg),
+    quotedSnippet
+  };
+}
+
 class WhatsAppService extends EventEmitter {
   constructor() {
     super();
     this.client = new Client({
       authStrategy: new LocalAuth(),
       puppeteer: {
-        headless: true, // Run in headless mode to not distract the user
+        headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
       }
     });
@@ -69,10 +104,6 @@ class WhatsAppService extends EventEmitter {
       if (onAuth) onAuth();
     });
 
-    // Single pipeline: message_create fires for every new Message (sent and received).
-    // Use Message's routing jid (same as Message._getChatId): outgoing uses `to` (the chat),
-    // incoming uses `from`. Avoid getChat() here — its id can differ (e.g. LID vs PN) from
-    // the jid you opened from getChats(), which broke chatIdsMatch for sends.
     this.client.on('message_create', (msg) => {
       void (async () => {
         if (!shouldEmitUserMessage(msg)) return;
@@ -95,15 +126,20 @@ class WhatsAppService extends EventEmitter {
           }
         }
 
+        const quotedSnippet = await quotedSnippetFrom(msg);
+
         this.emit('message', {
           id: msg.id._serialized,
           chatId,
           body: msg.body,
+          displayBody: displayBodyForParts(msg.type, msg.hasMedia, msg.body),
           timestamp: msg.timestamp,
           author,
           fromMe: msg.fromMe,
           type: msg.type,
-          hasMedia: Boolean(msg.hasMedia)
+          hasMedia: Boolean(msg.hasMedia),
+          hasQuotedMsg: Boolean(msg.hasQuotedMsg),
+          quotedSnippet
         });
       })();
     });
@@ -118,11 +154,11 @@ class WhatsAppService extends EventEmitter {
   async getChats() {
     const chats = await this.client.getChats();
     const sorted = chats.sort((a, b) => b.timestamp - a.timestamp);
-    
-    return sorted.map(chat => {
-      // Better title resolution: formattedTitle usually contains the pushname or the contact name
-      const title = chat.name || chat.formattedTitle || (chat.id && chat.id.user) || 'Unknown';
-      
+
+    return sorted.map((chat) => {
+      const title =
+        chat.name || chat.formattedTitle || (chat.id && chat.id.user) || 'Unknown';
+
       return {
         id: chat.id._serialized,
         name: title,
@@ -135,45 +171,37 @@ class WhatsAppService extends EventEmitter {
     });
   }
 
-  async getMessages(chatId, limit = 10, rawChat = null) {
+  async getMessages(chatId, limit = 40, rawChat = null) {
     try {
       let chat = rawChat;
-      
-      // If no raw chat, try getting all chats and finding it (avoids getChatById bug)
+
       if (!chat) {
         const chats = await this.getChats();
-        const found = chats.find(c => c.id === chatId);
+        const found = chats.find((c) => c.id === chatId);
         if (found) chat = found.raw;
       }
-      
+
       if (!chat) {
-         // Final fallback
-         chat = await this.client.getChatById(chatId).catch(() => null);
+        chat = await this.client.getChatById(chatId).catch(() => null);
       }
-      
+
       if (!chat || !chat.fetchMessages) return [];
-      
+
       const messages = await chat.fetchMessages({ limit });
       const filtered = messages.filter((msg) => shouldEmitUserMessage(msg));
-      return Promise.all(
-        filtered.map(async (msg) => ({
-          id: msg.id._serialized,
-          body: msg.body,
-          fromMe: msg.fromMe,
-          author: msg.fromMe
-            ? 'You'
-            : await resolveIncomingAuthor(msg, chat),
-          timestamp: msg.timestamp
-        }))
-      );
+      return Promise.all(filtered.map((msg) => rowFromClientMessage(msg, chat)));
     } catch (err) {
       console.error('Error in getMessages:', err);
       return [];
     }
   }
 
-  async sendMessage(chatId, text, rawChat = null) {
+  async sendMessage(chatId, text, rawChat = null, sendOptions = {}) {
     try {
+      const hasQuote = Boolean(sendOptions && sendOptions.quotedMessageId);
+      if (hasQuote) {
+        return this.client.sendMessage(chatId, text, sendOptions);
+      }
       if (rawChat && rawChat.sendMessage) {
         return rawChat.sendMessage(text);
       }
@@ -187,7 +215,39 @@ class WhatsAppService extends EventEmitter {
     }
   }
 
-  /** Ends the WA Web session and clears LocalAuth data (via client.logout). */
+  /** Saves media to ~/Downloads/wa-tui/, returns absolute file path. */
+  async downloadMessageMedia(messageId, chatId, rawChat = null) {
+    let chat = rawChat;
+    if (!chat) {
+      const chats = await this.getChats();
+      const found = chats.find((c) => c.id === chatId);
+      if (found) chat = found.raw;
+    }
+    if (!chat) {
+      chat = await this.client.getChatById(chatId).catch(() => null);
+    }
+    if (!chat || !chat.fetchMessages) {
+      throw new Error('Chat not available');
+    }
+    const messages = await chat.fetchMessages({ limit: 80 });
+    const msg = messages.find((m) => m.id._serialized === messageId);
+    if (!msg) throw new Error('Message not found');
+    if (!msg.hasMedia) throw new Error('This message has no media to download');
+    const media = await msg.downloadMedia();
+    if (!media || !media.data) throw new Error('Download failed');
+
+    const dir = path.join(os.homedir(), 'Downloads', 'wa-tui');
+    fs.mkdirSync(dir, { recursive: true });
+    const ext =
+      (media.mimetype && media.mimetype.split('/')[1] && media.mimetype.split('/')[1].split(';')[0]) ||
+      'bin';
+    const safe = String(messageId).replace(/[^a-z0-9]+/gi, '_').slice(-24);
+    const fname = `${Date.now()}_${safe}.${ext}`;
+    const fpath = path.join(dir, fname);
+    fs.writeFileSync(fpath, media.data, 'base64');
+    return fpath;
+  }
+
   async logoutSession() {
     this.ready = false;
     try {

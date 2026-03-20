@@ -3,6 +3,7 @@ const qrcode = require('qrcode-terminal');
 const state = require('./state');
 const waService = require('../whatsapp/service');
 const { formatTimestamp, truncate, chatIdsMatch } = require('../utils/format');
+const { augmentDisplayPlain } = require('../utils/messageFormat');
 const { paginate } = require('../utils/pager');
 
 /**
@@ -44,6 +45,7 @@ const layout = {
   footer: null,
   chatList: null,
   chatDetail: null,
+  replyBar: null,
   qrBox: null
 };
 
@@ -132,7 +134,9 @@ function clearLiveDedup() {
 }
 
 function isDuplicateLiveLine(payload) {
-  const body = payload.body != null ? String(payload.body).trim() : '';
+  const body =
+    (payload.displayBody != null && String(payload.displayBody).trim()) ||
+    (payload.body != null ? String(payload.body).trim() : '');
   const ts = Number(payload.timestamp) || 0;
   const fp = `${payload.fromMe ? '1' : '0'}|${ts}|${body}`;
   const now = Date.now();
@@ -149,16 +153,26 @@ function isDuplicateLiveLine(payload) {
 }
 
 function appendMsgListLine(payload) {
-  const { fromMe, author, body, timestamp } = payload;
+  const { fromMe, author, timestamp, id } = payload;
   if (!layout.msgList) return;
+  const row = {
+    type: payload.type || 'chat',
+    hasMedia: Boolean(payload.hasMedia),
+    hasQuotedMsg: Boolean(payload.hasQuotedMsg),
+    quotedSnippet: payload.quotedSnippet || '',
+    body: payload.body,
+    localPath: (id && state.mediaPaths[id]) || payload.localPath
+  };
   const nameColor = fromMe ? theme.selfMsg : theme.peerMsg;
   const name = fromMe
     ? `{bold}{${nameColor}-fg}You{/${nameColor}-fg}{/bold}`
     : `{bold}{${nameColor}-fg}${author}{/${nameColor}-fg}{/bold}`;
   const time = formatTimestamp(timestamp);
-  const text =
-    body != null && String(body).trim() !== '' ? String(body) : '—';
+  const text = augmentDisplayPlain(row).replace(/\{/g, '(');
   layout.msgList.add(`[${time}] ${name}: ${text}`);
+  try {
+    layout.msgList.scrollTo(layout.msgList.getScrollHeight());
+  } catch (_) {}
   screen.render();
 }
 
@@ -201,10 +215,10 @@ function updateFooter() {
   let line;
   if (state.screen === 'chatDetail') {
     line =
-      ' [B] / [Esc]: Back to chats · [Ctrl+L]: Logout · [Q]: Quit';
+      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+↑↓]: Quote msg · [Ctrl+D]: DL media · [Ctrl+L]: Logout · [Q]: Quit';
   } else if (state.screen === 'chats') {
     line =
-      ' [Q]: Quit · [Ctrl+L]: Logout · [R]: Refresh · [U]: Unread filter · [N]/[P]: Page · [1-3]: Filter';
+      ' [Q]: Quit · ctrl+L Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort';
   } else {
     line = ' [Q]: Quit · [Ctrl+L]: Logout';
   }
@@ -228,7 +242,13 @@ function updateTitle() {
   let modeText = state.screen.toUpperCase();
   if (state.screen === 'chats') {
     const u = state.unreadOnly ? ' · unread' : '';
-    modeText = `CHATS (${state.filter}${u}) - Page ${state.page}`;
+    const sortLabel =
+      state.chatSort === 'unread'
+        ? 'unread⬆'
+        : state.chatSort === 'alpha'
+          ? 'A-Z'
+          : 'recent';
+    modeText = `CHATS (${state.filter}${u} · ${sortLabel}) - P${state.page}`;
   } else if (state.screen === 'chatDetail') {
     modeText = `CHAT: ${state.currentChatName || 'Unknown'}`;
   }
@@ -245,12 +265,178 @@ function syncListAndDetailHeights() {
     layout.chatList.top = 1;
     layout.chatList.height = inner;
   }
-  if (layout.chatDetail && layout.msgList && layout.input) {
-    layout.chatDetail.top = 1;
-    layout.chatDetail.height = inner;
-    const ih = layout.input.height || 3;
-    layout.msgList.height = Math.max(4, inner - ih);
+  applyChatDetailLayout();
+}
+
+function applyChatDetailLayout() {
+  const inner = innerRows();
+  if (!layout.chatDetail || !layout.msgList || !layout.input) return;
+  const inputH = layout.input.height || 3;
+  const replyH = state.replyTo ? 1 : 0;
+  layout.chatDetail.top = 1;
+  layout.chatDetail.height = inner;
+  if (layout.replyBar) {
+    layout.replyBar.hidden = !state.replyTo;
+    layout.replyBar.bottom = inputH;
+    layout.replyBar.left = 0;
+    layout.replyBar.width = '100%';
+    layout.replyBar.height = 1;
   }
+  layout.input.bottom = 0;
+  layout.msgList.top = 0;
+  layout.msgList.height = Math.max(4, inner - inputH - replyH);
+}
+
+function persistCurrentDraft() {
+  if (state.screen !== 'chatDetail' || !state.currentChatId || !layout.input) {
+    return;
+  }
+  const v = layout.input.getValue();
+  if (v && String(v).trim()) state.chatDrafts[state.currentChatId] = v;
+  else delete state.chatDrafts[state.currentChatId];
+}
+
+function clearReplyTarget() {
+  state.replyTo = null;
+  state.replyPickIndex = null;
+}
+
+function updateReplyBarContent() {
+  if (!layout.replyBar) return;
+  if (!state.replyTo) {
+    layout.replyBar.setContent('');
+    return;
+  }
+  const sn = state.replyTo.snippet || '';
+  const A = theme.accent.slice(1);
+  const D = theme.fgDim.slice(1);
+  layout.replyBar.setContent(
+    `{#${A}-fg}↪{/} ${state.replyTo.author}: ${sn.replace(/\{/g, '(')}  {#${D}-fg}Esc clear · Ctrl+↑↓{/}`
+  );
+}
+
+function rowsWithPaths() {
+  return state.currentMessages.map((m) => ({
+    ...m,
+    localPath: state.mediaPaths[m.id] || m.localPath
+  }));
+}
+
+function redrawChatMessages() {
+  if (!layout.msgList) return;
+  if (!state.currentMessages.length) return;
+  const A = theme.accent.slice(1);
+  const rows = rowsWithPaths();
+  const content = rows
+    .map((m) => {
+      const nc = (m.fromMe ? theme.selfMsg : theme.peerMsg).slice(1);
+      const name = m.fromMe
+        ? `{bold}{#${nc}-fg}You{/#${nc}-fg}{/bold}`
+        : `{bold}{#${nc}-fg}${m.author}{/#${nc}-fg}{/bold}`;
+      const time = formatTimestamp(m.timestamp);
+      const mark =
+        state.replyTo && m.id === state.replyTo.id
+          ? `{#${A}-fg}▶ {/#${A}-fg}`
+          : '';
+      const plain = augmentDisplayPlain(m).replace(/\{/g, '(');
+      return `[${time}] ${mark}${name}: ${plain}`;
+    })
+    .join('\n');
+  layout.msgList.setContent(content);
+}
+
+function finishReplyUi() {
+  updateReplyBarContent();
+  applyChatDetailLayout();
+  redrawChatMessages();
+  screen.render();
+}
+
+/** newer = +1 (Ctrl+↑), older = -1 (Ctrl+↓) */
+function adjustReplyPick(delta) {
+  if (state.screen !== 'chatDetail') return;
+  const msgs = state.currentMessages;
+  if (!msgs.length) return;
+  let idx = state.replyPickIndex;
+
+  if (idx == null) {
+    if (delta > 0) return;
+    idx = msgs.length - 1;
+  } else {
+    idx += delta;
+    if (idx >= msgs.length) {
+      clearReplyTarget();
+      updateReplyBarContent();
+      applyChatDetailLayout();
+      redrawChatMessages();
+      screen.render();
+      return;
+    }
+    if (idx < 0) idx = 0;
+  }
+
+  state.replyPickIndex = idx;
+  const m = msgs[idx];
+  state.replyTo = {
+    id: m.id,
+    author: m.author,
+    snippet: String(m.displayBody || m.body || '')
+      .replace(/\{/g, '(')
+      .slice(0, 48)
+  };
+  finishReplyUi();
+}
+
+function applyChatSort(chats) {
+  const out = [...chats];
+  if (state.chatSort === 'unread') {
+    out.sort((a, b) => {
+      const du = (b.unreadCount || 0) - (a.unreadCount || 0);
+      if (du !== 0) return du;
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+  } else if (state.chatSort === 'alpha') {
+    out.sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    );
+  }
+  return out;
+}
+
+async function downloadHighlightedMedia() {
+  if (state.screen !== 'chatDetail') return;
+  let targetId = state.replyTo?.id;
+  if (targetId) {
+    const sel = state.currentMessages.find((m) => m.id === targetId);
+    if (sel && !sel.hasMedia) targetId = null;
+  }
+  if (!targetId) {
+    const withMedia = [...state.currentMessages].reverse().find((m) => m.hasMedia);
+    targetId = withMedia?.id;
+  }
+  if (!targetId) {
+    const er = theme.error.slice(1);
+    layout.msgList.add(
+      `{#${er}-fg}No media to download — Ctrl+↓ to pick a message.{/#${er}-fg}`
+    );
+    screen.render();
+    return;
+  }
+  try {
+    const fpath = await waService.downloadMessageMedia(
+      targetId,
+      state.currentChatId,
+      state.currentRawChat
+    );
+    state.mediaPaths[targetId] = fpath;
+    redrawChatMessages();
+    const d = theme.fgDim.slice(1);
+    layout.msgList.add(`{#${d}-fg}Saved: ${fpath.replace(/\{/g, '(')}{/#${d}-fg}`);
+  } catch (e) {
+    const er = theme.error.slice(1);
+    layout.msgList.add(`{#${er}-fg}Download failed: ${e.message}{/#${er}-fg}`);
+  }
+  screen.render();
 }
 
 function init() {
@@ -392,6 +578,10 @@ function showChats(chats) {
 }
 
 async function openChat(chatOrId) {
+  if (state.screen === 'chatDetail' && layout.input) {
+    persistCurrentDraft();
+  }
+
   const chat =
     typeof chatOrId === 'string'
       ? state.chats?.find((c) => c.id === chatOrId)
@@ -407,6 +597,7 @@ async function openChat(chatOrId) {
   state.currentRawChat = chat.raw;
   state.loading = true;
   clearLiveDedup();
+  clearReplyTarget();
 
   if (layout.chatList) layout.chatList.hide();
 
@@ -416,19 +607,6 @@ async function openChat(chatOrId) {
       left: 0,
       width: '100%',
       height: innerRows(),
-      style: {
-        fg: theme.fg,
-        bg: theme.bg
-      }
-    });
-
-    layout.input = blessed.textbox({
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      height: 3,
-      keys: true,
-      inputOnFocus: true,
       style: {
         fg: theme.fg,
         bg: theme.bg
@@ -450,15 +628,48 @@ async function openChat(chatOrId) {
       }
     });
 
+    layout.replyBar = blessed.box({
+      bottom: 3,
+      left: 0,
+      width: '100%',
+      height: 1,
+      hidden: true,
+      tags: true,
+      style: {
+        fg: theme.fgDim,
+        bg: theme.bg
+      }
+    });
+
+    layout.input = blessed.textbox({
+      bottom: 0,
+      left: 0,
+      width: '100%',
+      height: 3,
+      keys: true,
+      inputOnFocus: true,
+      style: {
+        fg: theme.fg,
+        bg: theme.bg
+      }
+    });
+
     layout.input.on('submit', async (text) => {
       if (text.trim()) {
         try {
+          const sendOpts = state.replyTo
+            ? { quotedMessageId: state.replyTo.id }
+            : {};
           await waService.sendMessage(
             state.currentChatId,
-            text,
-            state.currentRawChat
+            text.trim(),
+            state.currentRawChat,
+            sendOpts
           );
           layout.input.clearValue();
+          delete state.chatDrafts[state.currentChatId];
+          clearReplyTarget();
+          updateReplyBarContent();
           layout.input.focus();
           screen.render();
         } catch (e) {
@@ -470,6 +681,7 @@ async function openChat(chatOrId) {
     });
 
     layout.chatDetail.append(layout.msgList);
+    layout.chatDetail.append(layout.replyBar);
     layout.chatDetail.append(layout.input);
     screen.append(layout.chatDetail);
   }
@@ -482,7 +694,7 @@ async function openChat(chatOrId) {
 
   let messages = [];
   try {
-    messages = await waService.getMessages(chat.id, 10, chat.raw);
+    messages = await waService.getMessages(chat.id, 40, chat.raw);
   } catch (e) {
     const er = theme.error.slice(1);
     layout.msgList.setContent(`{#${er}-fg}Error loading messages: ${e.message}{/#${er}-fg}`);
@@ -490,32 +702,26 @@ async function openChat(chatOrId) {
     return;
   }
 
-  if (!messages || messages.length === 0) {
-    layout.msgList.setContent(
-      `{${theme.fgDim}-fg}No messages found.{/${theme.fgDim}-fg}`
-    );
-    screen.render();
-  }
-
   for (const m of messages) rememberLiveMessageId(m.id);
 
   state.currentMessages = messages;
 
-  const content = messages
-    .map((m) => {
-      const nameColor = m.fromMe ? theme.selfMsg : theme.peerMsg;
-      const name = m.fromMe
-        ? `{bold}{${nameColor}-fg}You{/${nameColor}-fg}{/bold}`
-        : `{bold}{${nameColor}-fg}${m.author}{/${nameColor}-fg}{/bold}`;
-      const time = formatTimestamp(m.timestamp);
-      const lineBody =
-        m.body != null && String(m.body).trim() !== '' ? String(m.body) : '—';
-      return `[${time}] ${name}: ${lineBody}`;
-    })
-    .join('\n');
+  if (!messages || messages.length === 0) {
+    layout.msgList.setContent(
+      `{${theme.fgDim}-fg}No messages found.{/${theme.fgDim}-fg}`
+    );
+  } else {
+    redrawChatMessages();
+    layout.msgList.scrollTo(layout.msgList.getScrollHeight());
+  }
 
-  layout.msgList.setContent(content);
-  layout.msgList.scrollTo(layout.msgList.getScrollHeight());
+  updateReplyBarContent();
+  applyChatDetailLayout();
+
+  const draft = state.chatDrafts[chat.id];
+  if (draft) layout.input.setValue(draft);
+  else layout.input.clearValue();
+
   layout.input.focus();
   screen.render();
 }
@@ -541,13 +747,30 @@ async function refreshChats() {
     chats = chats.filter((c) => (c.unreadCount || 0) > 0);
   }
 
+  chats = applyChatSort(chats);
+
   showChats(chats);
 }
 
-screen.key(['b', 'escape'], () => {
-  if (state.screen === 'chatDetail') {
-    refreshChats();
+screen.key(['escape'], () => {
+  if (state.screen !== 'chatDetail') return;
+  if (state.replyTo) {
+    clearReplyTarget();
+    updateReplyBarContent();
+    applyChatDetailLayout();
+    redrawChatMessages();
+    screen.render();
+    return;
   }
+  persistCurrentDraft();
+  refreshChats();
+});
+
+screen.key(['b'], () => {
+  if (state.screen !== 'chatDetail') return;
+  persistCurrentDraft();
+  clearReplyTarget();
+  refreshChats();
 });
 
 screen.key(['C-l'], () => {
@@ -585,6 +808,23 @@ screen.key(['u', 'U'], () => {
   refreshChats();
 });
 
+const CHAT_SORT_CYCLE = ['recent', 'unread', 'alpha'];
+
+screen.key(['o', 'O'], () => {
+  if (state.screen !== 'chats') return;
+  const i = CHAT_SORT_CYCLE.indexOf(state.chatSort);
+  state.chatSort = CHAT_SORT_CYCLE[(i + 1) % CHAT_SORT_CYCLE.length];
+  state.page = 1;
+  refreshChats();
+});
+
+screen.key(['C-up'], () => adjustReplyPick(1));
+screen.key(['C-down'], () => adjustReplyPick(-1));
+
+screen.key(['C-d'], () => {
+  void downloadHighlightedMedia();
+});
+
 waService.on('message', (msg) => {
   if (state.screen === 'chats') {
     refreshChats();
@@ -602,12 +842,23 @@ waService.on('message', (msg) => {
   if (isDuplicateLiveLine(msg)) return;
 
   rememberLiveMessageId(msg.id);
-  appendMsgListLine({
+  const row = {
+    id: msg.id,
+    body: msg.body,
+    displayBody: msg.displayBody,
     fromMe: msg.fromMe,
     author: msg.author,
-    body: msg.body,
-    timestamp: msg.timestamp
-  });
+    timestamp: msg.timestamp,
+    type: msg.type,
+    hasMedia: msg.hasMedia,
+    hasQuotedMsg: msg.hasQuotedMsg,
+    quotedSnippet: msg.quotedSnippet || ''
+  };
+  state.currentMessages.push(row);
+  if (state.currentMessages.length > 200) {
+    state.currentMessages.splice(0, state.currentMessages.length - 200);
+  }
+  appendMsgListLine(row);
 });
 
 screen.key(['n'], () => {
