@@ -2,8 +2,8 @@ name: Publish to npm
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
 
 jobs:
   publish:
@@ -14,25 +14,36 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect version bump
+        id: version
+        run: |
+          NEW=$(node -p "require('./package.json').version")
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            OLD=$(git show HEAD~1:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          else
+            OLD=""
+          fi
+          if [ "$OLD" = "$NEW" ]; then
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            echo "No change to package.json version ($NEW); skipping npm publish."
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+            echo "Version $OLD → $NEW; will publish."
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.version.outputs.bump == 'true'
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - run: npm ci
+      - if: steps.version.outputs.bump == 'true'
+        run: npm ci
 
-      - name: Verify tag matches package.json
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          VERSION="${TAG#v}"
-          PKG=$(node -p "require('./package.json').version")
-          if [ "$VERSION" != "$PKG" ]; then
-            echo "::error::Tag $TAG does not match package.json version $PKG"
-            exit 1
-          fi
-
-      - run: npm publish --access public --provenance
+      - if: steps.version.outputs.bump == 'true'
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
