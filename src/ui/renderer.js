@@ -5,6 +5,7 @@ const waService = require('../whatsapp/service');
 const { formatTimestamp, truncate, chatIdsMatch } = require('../utils/format');
 const { augmentDisplayPlain } = require('../utils/messageFormat');
 const { paginate } = require('../utils/pager');
+const { playIncomingMessageSound } = require('../utils/notifySound');
 const { loadSettings, saveSettings } = require('../config/userSettings');
 const {
   PALETTES,
@@ -1031,6 +1032,12 @@ screen.key(['C-d'], () => {
 });
 
 waService.on('message', (msg) => {
+  const viewingThisChat =
+    state.screen === 'chatDetail' && chatIdsMatch(state.currentChatId, msg.chatId);
+  if (!msg.fromMe && !viewingThisChat) {
+    playIncomingMessageSound();
+  }
+
   if (state.screen === 'chats') {
     refreshChats();
   }

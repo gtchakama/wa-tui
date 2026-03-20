@@ -1,8 +1,16 @@
 {
-  "name": "wa-tui",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "@gtchakama/wa-tui",
+  "version": "1.0.1",
+  "description": "Terminal UI for WhatsApp Web (blessed + whatsapp-web.js)",
+  "main": "src/index.js",
+  "bin": {
+    "wa-tui": "bin/wa-tui.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "start:resize": "WA_TUI_RESIZE=1 node src/index.js",
@@ -12,10 +20,21 @@
     "type": "git",
     "url": "git+https://github.com/gtchakama/wa-tui.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "whatsapp",
+    "whatsapp-web",
+    "tui",
+    "terminal",
+    "cli",
+    "blessed",
+    "chat"
+  ],
+  "author": "gtchakama",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "bugs": {
     "url": "https://github.com/gtchakama/wa-tui/issues"
   },
