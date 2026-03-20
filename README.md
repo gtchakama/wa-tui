@@ -13,11 +13,11 @@ Session data and cache are stored under `.wwebjs_auth` and `.wwebjs_cache` in th
 
 ### Homebrew (macOS / Linux)
 
-Uses [Homebrew](https://brew.sh/) so `wa-tui` is on your PATH like any other CLI. This repository is a [tap](https://docs.brew.sh/Taps): it contains [`Formula/wa-tui.rb`](Formula/wa-tui.rb), which installs the published npm tarball and pulls in **Node** as a dependency.
+Uses [Homebrew](https://brew.sh/) so `wa-tui` is on your PATH like any other CLI. This repository contains [`Formula/wa-tui.rb`](Formula/wa-tui.rb), which installs the published npm tarball and pulls in **Node** as a dependency. Because the GitHub repository is named `wa-tui` rather than `homebrew-wa-tui`, tap it with an explicit URL:
 
 ```bash
-brew tap gtchakama/wa-tui
-brew install wa-tui
+brew tap gtchakama/wa-tui https://github.com/gtchakama/wa-tui
+brew install gtchakama/wa-tui/wa-tui
 ```
 
 Upgrade later with `brew upgrade wa-tui`. You still need **Chrome** or **Chromium** locally (see Requirements).
