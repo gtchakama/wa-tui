@@ -26,6 +26,8 @@ const theme = Object.assign(
 
 const screen = blessed.screen({
   smartCSR: true,
+  fullUnicode: true,
+  forceUnicode: true,
   title: 'wa-tui',
   // neo-blessed only applies cursor styling if `shape` is set (see screen.enter).
   cursor: {
@@ -85,7 +87,8 @@ function innerRows() {
   return Math.max(6, (screen.height || 24) - 2);
 }
 
-function makePane(parent, label) {
+function makePane(parent, label, options = {}) {
+  const transparent = options.transparent !== false;
   const pane = blessed.box({
     parent,
     top: 0,
@@ -95,7 +98,7 @@ function makePane(parent, label) {
     border: 'line',
     label: ` ${label} `,
     tags: true,
-    transparent: true,
+    transparent,
     style: {
       fg: theme.fg,
       border: { fg: theme.fgDim },
@@ -110,7 +113,7 @@ function makePane(parent, label) {
     width: Math.max(2, pane.width - 2),
     height: Math.max(2, pane.height - 2),
     tags: true,
-    transparent: true,
+    transparent,
     style: { fg: theme.fg }
   });
 
@@ -739,18 +742,35 @@ function chatBrowserGeometry() {
 }
 
 function detailGeometry() {
-  const totalWidth = screen.width || 100;
-  const totalHeight = innerRows();
-  const sideWidth = Math.max(28, Math.floor(totalWidth * 0.24));
-  const gap = 1;
-  const mainWidth = Math.max(40, totalWidth - sideWidth - gap);
-  return {
-    top: 1,
-    mainWidth,
-    sideWidth,
+  const {
+    top,
+    leftWidth,
+    centerWidth,
+    rightWidth,
     gap,
-    height: totalHeight
+    height
+  } = chatBrowserGeometry();
+  return {
+    top,
+    left: leftWidth + gap,
+    mainWidth: centerWidth,
+    sideWidth: rightWidth,
+    gap,
+    height
   };
+}
+
+function showChatBrowserColumns(mode = 'browser') {
+  if (!layout.chatBrowser) return;
+  layout.chatBrowser.show();
+  layout.chatListPane?.show();
+  if (mode === 'detail') {
+    layout.chatPreviewPane?.hide();
+    layout.chatMetaPane?.hide();
+    return;
+  }
+  layout.chatPreviewPane?.show();
+  layout.chatMetaPane?.show();
 }
 
 function formatChatListItems(pageItems) {
@@ -1020,10 +1040,10 @@ function renderChatDetailMeta() {
 
 function syncChatDetailShell() {
   if (!layout.chatDetail) return;
-  const { top, mainWidth, sideWidth, gap, height } = detailGeometry();
+  const { top, left, mainWidth, sideWidth, gap, height } = detailGeometry();
   layout.chatDetail.top = top;
-  layout.chatDetail.left = 0;
-  layout.chatDetail.width = screen.width || 100;
+  layout.chatDetail.left = left;
+  layout.chatDetail.width = mainWidth + gap + sideWidth;
   layout.chatDetail.height = height;
 
   layout.chatDetailMain.top = 0;
@@ -1053,12 +1073,16 @@ function ensureChatDetailLayout() {
     left: 0,
     width: '100%',
     height: innerRows(),
-    transparent: true,
+    transparent: false,
     style: { fg: theme.fg }
   });
 
-  layout.chatDetailMain = makePane(layout.chatDetail, ' thread ');
-  layout.chatDetailSide = makePane(layout.chatDetail, ' chat info ');
+  layout.chatDetailMain = makePane(layout.chatDetail, ' thread ', {
+    transparent: false
+  });
+  layout.chatDetailSide = makePane(layout.chatDetail, ' chat info ', {
+    transparent: false
+  });
   layout.chatDetailSideBody = blessed.box({
     parent: layout.chatDetailSide._inner,
     top: 0,
@@ -1066,7 +1090,7 @@ function ensureChatDetailLayout() {
     width: 10,
     height: 10,
     tags: true,
-    transparent: true,
+    transparent: false,
     style: { fg: theme.fg }
   });
 
@@ -1081,7 +1105,7 @@ function ensureChatDetailLayout() {
     alwaysScroll: true,
     tags: true,
     padding: { left: 0, right: 0 },
-    transparent: true,
+    transparent: false,
     style: { fg: theme.fg }
   });
 
@@ -1093,7 +1117,7 @@ function ensureChatDetailLayout() {
     height: 1,
     hidden: true,
     tags: true,
-    transparent: true,
+    transparent: false,
     style: { fg: theme.fgDim }
   });
 
@@ -1106,7 +1130,7 @@ function ensureChatDetailLayout() {
     keys: true,
     mouse: true,
     inputOnFocus: true,
-    transparent: true,
+    transparent: false,
     style: { fg: theme.fg }
   });
 
@@ -1409,6 +1433,7 @@ function closeSettings() {
   state.settingsReturnScreen = null;
 
   if (back === 'chatDetail') {
+    showChatBrowserColumns('detail');
     layout.chatDetail?.show();
     refreshWidgetStyles();
     redrawChatMessages();
@@ -1474,7 +1499,7 @@ function showChats(chats) {
 
   hidePrimaryViews();
   ensureChatBrowserLayout();
-  layout.chatBrowser.show();
+  showChatBrowserColumns('browser');
   syncChatBrowserLayout();
   setPaneActive(layout.chatListPane, true);
   setPaneActive(layout.chatPreviewPane, false);
@@ -1554,10 +1579,15 @@ async function openChat(chatOrId) {
   clearLiveDedup();
   clearReplyTarget();
 
-  hidePrimaryViews();
+  layout.main?.hide();
+  layout.settingsRoot?.hide();
+  layout.qrRoot?.hide();
+  ensureChatBrowserLayout();
+  showChatBrowserColumns('detail');
   ensureChatDetailLayout();
   syncChatDetailShell();
   layout.chatDetail.show();
+  setPaneActive(layout.chatListPane, false);
   setPaneActive(layout.chatDetailMain, true);
   setPaneActive(layout.chatDetailSide, false);
   layout.msgList.setContent(`{${theme.fgDim}-fg}Loading messages…{/${theme.fgDim}-fg}`);
