@@ -4,7 +4,8 @@ const os = require('os');
 const {
   Client,
   LocalAuth,
-  MessageTypes
+  MessageTypes,
+  MessageAck
 } = require('whatsapp-web.js');
 const EventEmitter = require('events');
 const { formatPeerLabel, truncate } = require('../utils/format');
@@ -60,6 +61,29 @@ async function quotedSnippetFrom(msg) {
   }
 }
 
+function chatIdFromClientMessage(msg) {
+  if (!msg) return '';
+  const to =
+    typeof msg.to === 'string'
+      ? msg.to
+      : msg.to && msg.to._serialized
+        ? msg.to._serialized
+        : '';
+  const from =
+    typeof msg.from === 'string'
+      ? msg.from
+      : msg.from && msg.from._serialized
+        ? msg.from._serialized
+        : '';
+  if (msg.fromMe) return to || from;
+  return from || to;
+}
+
+function ackFromMessage(msg) {
+  if (!msg || !msg.fromMe) return undefined;
+  return typeof msg.ack === 'number' ? msg.ack : MessageAck.ACK_PENDING;
+}
+
 async function rowFromClientMessage(msg, chat) {
   const author = msg.fromMe ? 'You' : await resolveIncomingAuthor(msg, chat);
   const quotedSnippet = await quotedSnippetFrom(msg);
@@ -73,7 +97,8 @@ async function rowFromClientMessage(msg, chat) {
     type: msg.type,
     hasMedia: Boolean(msg.hasMedia),
     hasQuotedMsg: Boolean(msg.hasQuotedMsg),
-    quotedSnippet
+    quotedSnippet,
+    ack: ackFromMessage(msg)
   };
 }
 
@@ -88,6 +113,144 @@ class WhatsAppService extends EventEmitter {
       }
     });
     this.ready = false;
+    this._remoteTypingBridgeInstalled = false;
+  }
+
+  /**
+   * Mark chat as read in WhatsApp (blue ticks for the other party when applicable).
+   */
+  async markChatSeen(chatId, rawChat = null) {
+    if (!chatId) return;
+    try {
+      let chat = rawChat;
+      if (!chat || typeof chat.sendSeen !== 'function') {
+        chat = await this.client.getChatById(chatId);
+      }
+      if (chat && typeof chat.sendSeen === 'function') await chat.sendSeen();
+    } catch (_) {}
+  }
+
+  /** Notify the peer that we are composing (WhatsApp refreshes ~25s). */
+  async pulseOutgoingTyping(chatId, rawChat = null) {
+    if (!chatId) return;
+    try {
+      let chat = rawChat;
+      if (!chat || typeof chat.sendStateTyping !== 'function') {
+        chat = await this.client.getChatById(chatId);
+      }
+      if (chat && typeof chat.sendStateTyping === 'function') {
+        await chat.sendStateTyping();
+      }
+    } catch (_) {}
+  }
+
+  /** Stop composing/recording indicator for this chat. */
+  async clearOutgoingTyping(chatId, rawChat = null) {
+    if (!chatId) return;
+    try {
+      let chat = rawChat;
+      if (!chat || typeof chat.clearState !== 'function') {
+        chat = await this.client.getChatById(chatId);
+      }
+      if (chat && typeof chat.clearState === 'function') await chat.clearState();
+    } catch (_) {}
+  }
+
+  /**
+   * Best-effort: listen to WhatsApp Web chat models for remote typing/recording.
+   * Emits `remote_typing` with `{ chatId, state: 'typing'|'recording'|null }`.
+   */
+  async installRemoteTypingBridge() {
+    if (this._remoteTypingBridgeInstalled) return;
+    const page = this.client && this.client.pupPage;
+    if (!page) return;
+
+    try {
+      await page.exposeFunction('waTuiRemoteTyping', (json) => {
+        let payload;
+        try {
+          payload = JSON.parse(json);
+        } catch (_) {
+          return;
+        }
+        this.emit('remote_typing', payload);
+      });
+    } catch (err) {
+      const m = String(err && err.message ? err.message : err);
+      if (!m.includes('already been registered')) {
+        return;
+      }
+    }
+
+    try {
+      await page.evaluate(() => {
+        if (window.__waTuiTypingHook) return;
+        window.__waTuiTypingHook = true;
+
+        const notify = (chatId, state) => {
+          try {
+            window.waTuiRemoteTyping(
+              JSON.stringify({ chatId, state: state || null })
+            );
+          } catch (_) {}
+        };
+
+        const mapState = (v) => {
+          if (v == null) return null;
+          if (typeof v === 'string') {
+            const s = v.toLowerCase();
+            if (s.includes('typing') || s === 'composing') return 'typing';
+            if (s.includes('record')) return 'recording';
+            return null;
+          }
+          if (typeof v === 'number') {
+            if (v === 1) return 'typing';
+            if (v === 2) return 'recording';
+            if (v === 0) return null;
+          }
+          if (typeof v === 'object') {
+            const t = v.type || v.chatstate || v.state;
+            if (t) return mapState(t);
+          }
+          return null;
+        };
+
+        const hookChat = (chat) => {
+          if (!chat || !chat.id || chat.__waTuiTypingHook) return;
+          if (typeof chat.on !== 'function') return;
+          chat.__waTuiTypingHook = true;
+
+          const fire = (raw) => {
+            const st = mapState(raw);
+            notify(chat.id._serialized, st);
+          };
+
+          try {
+            chat.on('change:chatState', (_m, v) => fire(v));
+          } catch (_) {}
+          try {
+            chat.on('change:chatstate', (_m, v) => fire(v));
+          } catch (_) {}
+          try {
+            chat.on('change:presence', (_m, v) => fire(v));
+          } catch (_) {}
+        };
+
+        const store = window.Store;
+        if (!store || !store.Chat) return;
+
+        try {
+          store.Chat.on('add', hookChat);
+        } catch (_) {}
+        try {
+          if (typeof store.Chat.getModelsArray === 'function') {
+            store.Chat.getModelsArray().forEach(hookChat);
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+
+    this._remoteTypingBridgeInstalled = true;
   }
 
   initialize(onQr, onReady, onAuth) {
@@ -102,6 +265,15 @@ class WhatsAppService extends EventEmitter {
 
     this.client.on('authenticated', () => {
       if (onAuth) onAuth();
+    });
+
+    this.client.on('message_ack', (msg, ack) => {
+      if (!msg || !msg.id?._serialized) return;
+      this.emit('message_ack', {
+        messageId: msg.id._serialized,
+        chatId: chatIdFromClientMessage(msg),
+        ack
+      });
     });
 
     this.client.on('message_create', (msg) => {
@@ -148,7 +320,8 @@ class WhatsAppService extends EventEmitter {
           type: msg.type,
           hasMedia: Boolean(msg.hasMedia),
           hasQuotedMsg: Boolean(msg.hasQuotedMsg),
-          quotedSnippet
+          quotedSnippet,
+          ack: ackFromMessage(msg)
         });
       })();
     });

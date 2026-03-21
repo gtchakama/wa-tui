@@ -24,7 +24,9 @@ const state = {
   error: null,
   unreadCount: 0,
   /** When opening Settings (F2), where to return: chats | chatDetail */
-  settingsReturnScreen: null
+  settingsReturnScreen: null,
+  /** Remote peer composing: 'typing' | 'recording' | null (current chat only) */
+  peerTypingState: null
 };
 
 module.exports = state;

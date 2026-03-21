@@ -1,5 +1,6 @@
 const blessed = require('neo-blessed');
 const qrcode = require('qrcode-terminal');
+const { MessageAck } = require('whatsapp-web.js');
 const state = require('./state');
 const waService = require('../whatsapp/service');
 const { formatTimestamp, truncate, chatIdsMatch } = require('../utils/format');
@@ -58,6 +59,7 @@ const layout = {
   chatDetailSide: null,
   chatDetailSideBody: null,
   replyBar: null,
+  typingBar: null,
   settingsList: null,
   settingsRoot: null,
   settingsListPane: null,
@@ -191,6 +193,12 @@ function startBootLoader() {
 const LIVE_MSG_ID_CAP = 2000;
 const seenLiveMessageIds = new Set();
 
+/** Debounced outgoing typing indicator to WhatsApp peers */
+let outgoingTypingTimer = null;
+let peerTypingHideTimer = null;
+
+const OUTGOING_TYPING_DEBOUNCE_MS = 480;
+
 const liveLineDedupTtlMs = 6000;
 const liveLineFingerprints = new Map();
 
@@ -227,6 +235,89 @@ function isDuplicateLiveLine(payload) {
   return false;
 }
 
+function scheduleOutgoingTypingPulse() {
+  if (state.screen !== 'chatDetail' || !state.currentChatId) return;
+  clearTimeout(outgoingTypingTimer);
+  outgoingTypingTimer = setTimeout(() => {
+    outgoingTypingTimer = null;
+    void waService.pulseOutgoingTyping(state.currentChatId, state.currentRawChat);
+  }, OUTGOING_TYPING_DEBOUNCE_MS);
+}
+
+function clearOutgoingTypingSchedule() {
+  clearTimeout(outgoingTypingTimer);
+  outgoingTypingTimer = null;
+}
+
+async function stopOutgoingTypingOnLeave() {
+  clearOutgoingTypingSchedule();
+  const id = state.currentChatId;
+  const raw = state.currentRawChat;
+  if (id) await waService.clearOutgoingTyping(id, raw);
+}
+
+function peerTypingLabel() {
+  if (state.peerTypingState === 'recording') return 'recording audio…';
+  if (state.peerTypingState === 'typing') return 'typing…';
+  return '';
+}
+
+function updatePeerTypingBar() {
+  if (!layout.typingBar) return;
+  const label = peerTypingLabel();
+  if (!label) {
+    layout.typingBar.setContent('');
+  } else {
+    const D = theme.fgDim.slice(1);
+    layout.typingBar.setContent(`{#${D}-fg}● ${label}{/#${D}-fg}`);
+  }
+  applyChatDetailLayout();
+  renderChatDetailMeta();
+  screen.render();
+}
+
+function refreshPeerTypingTimeout() {
+  clearTimeout(peerTypingHideTimer);
+  if (!state.peerTypingState) return;
+  peerTypingHideTimer = setTimeout(() => {
+    peerTypingHideTimer = null;
+    state.peerTypingState = null;
+    updatePeerTypingBar();
+  }, 6500);
+}
+
+function clearPeerTypingState() {
+  clearTimeout(peerTypingHideTimer);
+  peerTypingHideTimer = null;
+  state.peerTypingState = null;
+  if (layout.typingBar) layout.typingBar.setContent('');
+  applyChatDetailLayout();
+  renderChatDetailMeta();
+  screen.render();
+}
+
+function ackSuffix(ack) {
+  if (ack === undefined || ack === null) return '';
+  if (ack === MessageAck.ACK_ERROR) {
+    const er = theme.error.slice(1);
+    return ` {#${er}-fg}⚠{/}`;
+  }
+  if (ack === MessageAck.ACK_READ || ack === MessageAck.ACK_PLAYED) {
+    const a = theme.accent.slice(1);
+    return ` {#${a}-fg}✓✓{/}`;
+  }
+  if (ack === MessageAck.ACK_DEVICE) {
+    const d = theme.fgDim.slice(1);
+    return ` {#${d}-fg}✓✓{/}`;
+  }
+  if (ack === MessageAck.ACK_SERVER) {
+    const d = theme.fgDim.slice(1);
+    return ` {#${d}-fg}✓{/}`;
+  }
+  const d = theme.fgDim.slice(1);
+  return ` {#${d}-fg}…{/}`;
+}
+
 function appendMsgListLine(payload) {
   const { fromMe, author, timestamp, id } = payload;
   if (!layout.msgList) return;
@@ -244,7 +335,8 @@ function appendMsgListLine(payload) {
     : `{bold}{${nameColor}-fg}${author}{/${nameColor}-fg}{/bold}`;
   const time = formatTimestamp(timestamp);
   const text = augmentDisplayPlain(row).replace(/\{/g, '(');
-  layout.msgList.add(`[${time}] ${name}: ${text}`);
+  const ack = fromMe ? ackSuffix(payload.ack) : '';
+  layout.msgList.add(`[${time}] ${name}: ${text}${ack}`);
   try {
     layout.msgList.scrollTo(layout.msgList.getScrollHeight());
   } catch (_) {}
@@ -330,6 +422,10 @@ function refreshWidgetStyles() {
     layout.replyBar.style.fg = theme.fgDim;
     delete layout.replyBar.style.bg;
   }
+  if (layout.typingBar) {
+    layout.typingBar.style.fg = theme.fgDim;
+    delete layout.typingBar.style.bg;
+  }
   if (layout.settingsList) {
     layout.settingsList.style.fg = theme.fg;
     delete layout.settingsList.style.bg;
@@ -410,6 +506,8 @@ function applyPalette(paletteId) {
   } else if (state.screen === 'chatDetail') {
     setPaneActive(layout.chatDetailMain, true);
     setPaneActive(layout.chatDetailSide, false);
+    redrawChatMessages();
+    updatePeerTypingBar();
   } else if (state.screen === 'settings') {
     setPaneActive(layout.settingsListPane, true);
     setPaneActive(layout.settingsPreviewPane, false);
@@ -442,7 +540,7 @@ function updateFooter() {
       ' [Enter]: apply palette · [Esc]/[F2]: back · Saved: ~/.wa-tui/settings.json · [Q]: Quit';
   } else if (state.screen === 'chatDetail') {
     line =
-      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+↑↓]: Quote msg · [Ctrl+D]: DL media · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit';
+      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+↑↓]: Quote · [Ctrl+D]: DL · typing + receipts · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit';
   } else if (state.screen === 'chats') {
     line =
       ' [Q]: Quit · [F2]: Colours · ctrl+L Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort';
@@ -508,9 +606,17 @@ function applyChatDetailLayout() {
   const width = layout.chatDetailMain._inner.width;
   const inputH = layout.input.height || 3;
   const replyH = state.replyTo ? 1 : 0;
+  const typingH = state.peerTypingState ? 1 : 0;
+  if (layout.typingBar) {
+    layout.typingBar.hidden = !state.peerTypingState;
+    layout.typingBar.bottom = inputH;
+    layout.typingBar.left = 0;
+    layout.typingBar.width = width;
+    layout.typingBar.height = 1;
+  }
   if (layout.replyBar) {
     layout.replyBar.hidden = !state.replyTo;
-    layout.replyBar.bottom = inputH;
+    layout.replyBar.bottom = inputH + typingH;
     layout.replyBar.left = 0;
     layout.replyBar.width = width;
     layout.replyBar.height = 1;
@@ -521,7 +627,7 @@ function applyChatDetailLayout() {
   layout.msgList.top = 0;
   layout.msgList.left = 0;
   layout.msgList.width = width;
-  layout.msgList.height = Math.max(4, inner - inputH - replyH);
+  layout.msgList.height = Math.max(4, inner - inputH - replyH - typingH);
 }
 
 function persistCurrentDraft() {
@@ -576,7 +682,8 @@ function redrawChatMessages() {
           ? `{#${A}-fg}▶ {/#${A}-fg}`
           : '';
       const plain = augmentDisplayPlain(m).replace(/\{/g, '(');
-      return `[${time}] ${mark}${name}: ${plain}`;
+      const ack = m.fromMe ? ackSuffix(m.ack) : '';
+      return `[${time}] ${mark}${name}: ${plain}${ack}`;
     })
     .join('\n');
   layout.msgList.setContent(content);
@@ -1027,6 +1134,16 @@ function renderChatDetailMeta() {
       ? `${state.replyTo.author}: ${state.replyTo.snippet}`.replace(/\{/g, '(')
       : 'none',
     '',
+    `{bold}your messages{/bold}`,
+    '✓ sent · ✓✓ delivered · accent ✓✓ read',
+    '',
+    `{bold}peer activity{/bold}`,
+    state.peerTypingState === 'recording'
+      ? 'recording audio…'
+      : state.peerTypingState === 'typing'
+        ? 'typing…'
+        : '—',
+    '',
     `{bold}actions{/bold}`,
     'Esc clear quote / back',
     'B back to chats',
@@ -1121,6 +1238,18 @@ function ensureChatDetailLayout() {
     style: { fg: theme.fgDim }
   });
 
+  layout.typingBar = blessed.box({
+    parent: layout.chatDetailMain._inner,
+    bottom: 3,
+    left: 0,
+    width: 10,
+    height: 1,
+    hidden: true,
+    tags: true,
+    transparent: false,
+    style: { fg: theme.fgDim }
+  });
+
   layout.input = blessed.textbox({
     parent: layout.chatDetailMain._inner,
     bottom: 0,
@@ -1134,9 +1263,13 @@ function ensureChatDetailLayout() {
     style: { fg: theme.fg }
   });
 
+  layout.input.on('keypress', () => scheduleOutgoingTypingPulse());
+
   layout.input.on('submit', async (text) => {
     if (!text.trim()) return;
     try {
+      clearOutgoingTypingSchedule();
+      await waService.clearOutgoingTyping(state.currentChatId, state.currentRawChat);
       const sendOpts = state.replyTo
         ? { quotedMessageId: state.replyTo.id }
         : {};
@@ -1561,6 +1694,13 @@ async function openChat(chatOrId) {
   if (state.screen === 'chatDetail' && layout.input) {
     persistCurrentDraft();
   }
+  if (state.screen === 'chatDetail' && state.currentChatId) {
+    void waService.clearOutgoingTyping(state.currentChatId, state.currentRawChat);
+  }
+  clearOutgoingTypingSchedule();
+  clearTimeout(peerTypingHideTimer);
+  peerTypingHideTimer = null;
+  state.peerTypingState = null;
 
   const chat =
     typeof chatOrId === 'string'
@@ -1587,6 +1727,7 @@ async function openChat(chatOrId) {
   ensureChatDetailLayout();
   syncChatDetailShell();
   layout.chatDetail.show();
+  if (layout.typingBar) layout.typingBar.setContent('');
   setPaneActive(layout.chatListPane, false);
   setPaneActive(layout.chatDetailMain, true);
   setPaneActive(layout.chatDetailSide, false);
@@ -1628,6 +1769,8 @@ async function openChat(chatOrId) {
   if (draft) layout.input.setValue(draft);
   else layout.input.clearValue();
 
+  void waService.markChatSeen(chat.id, chat.raw);
+
   layout.input.focus();
   screen.render();
 }
@@ -1638,6 +1781,7 @@ function handleReady() {
     `{${theme.fgDim}-fg}WhatsApp ready — loading chats…{/${theme.fgDim}-fg}`
   );
   screen.render();
+  void waService.installRemoteTypingBridge();
   refreshChats();
 }
 
@@ -1672,12 +1816,18 @@ screen.key(['escape'], () => {
     screen.render();
     return;
   }
+  void waService.clearOutgoingTyping(state.currentChatId, state.currentRawChat);
+  clearOutgoingTypingSchedule();
+  clearPeerTypingState();
   persistCurrentDraft();
   refreshChats();
 });
 
 screen.key(['b'], () => {
   if (state.screen !== 'chatDetail') return;
+  void waService.clearOutgoingTyping(state.currentChatId, state.currentRawChat);
+  clearOutgoingTypingSchedule();
+  clearPeerTypingState();
   persistCurrentDraft();
   clearReplyTarget();
   refreshChats();
@@ -1746,6 +1896,9 @@ screen.key(['C-d'], () => {
 waService.on('message', (msg) => {
   const viewingThisChat =
     state.screen === 'chatDetail' && chatIdsMatch(state.currentChatId, msg.chatId);
+  if (viewingThisChat && !msg.fromMe) {
+    void waService.markChatSeen(state.currentChatId, state.currentRawChat);
+  }
   if (!msg.fromMe && !viewingThisChat) {
     playIncomingMessageSound();
     const title = msg.isGroup
@@ -1786,13 +1939,48 @@ waService.on('message', (msg) => {
     type: msg.type,
     hasMedia: msg.hasMedia,
     hasQuotedMsg: msg.hasQuotedMsg,
-    quotedSnippet: msg.quotedSnippet || ''
+    quotedSnippet: msg.quotedSnippet || '',
+    ack:
+      msg.fromMe && msg.ack !== undefined && msg.ack !== null
+        ? msg.ack
+        : msg.fromMe
+          ? MessageAck.ACK_PENDING
+          : undefined
   };
   state.currentMessages.push(row);
   if (state.currentMessages.length > 200) {
     state.currentMessages.splice(0, state.currentMessages.length - 200);
   }
   appendMsgListLine(row);
+});
+
+waService.on('message_ack', ({ messageId, chatId, ack }) => {
+  if (
+    state.screen !== 'chatDetail' ||
+    !chatIdsMatch(state.currentChatId, chatId)
+  ) {
+    return;
+  }
+  const row = state.currentMessages.find((m) => m.id === messageId);
+  if (!row || !row.fromMe) return;
+  row.ack = ack;
+  redrawChatMessages();
+  screen.render();
+});
+
+waService.on('remote_typing', (payload) => {
+  const { chatId, state: remoteState } = payload || {};
+  if (!chatId || state.screen !== 'chatDetail') return;
+  if (!chatIdsMatch(state.currentChatId, chatId)) return;
+  if (!remoteState) {
+    state.peerTypingState = null;
+  } else if (remoteState === 'recording') {
+    state.peerTypingState = 'recording';
+  } else {
+    state.peerTypingState = 'typing';
+  }
+  updatePeerTypingBar();
+  refreshPeerTypingTimeout();
 });
 
 screen.key(['n'], () => {
