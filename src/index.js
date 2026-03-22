@@ -4,6 +4,10 @@ const renderer = require('./ui/renderer');
 async function main() {
   renderer.init();
 
+  waService.on('lifecycle', (ev) => {
+    renderer.updateBootPhase(ev);
+  });
+
   await waService.initialize(
     // onQr
     (qr) => {
@@ -14,9 +18,7 @@ async function main() {
       renderer.handleReady();
     },
     // onAuth
-    () => {
-      console.log('Authenticated!');
-    }
+    () => {}
   );
 }
 

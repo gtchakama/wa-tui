@@ -162,7 +162,7 @@ function layoutMainPanel(phase) {
     layout.main.height = inner;
   } else if (phase === 'loading') {
     layout.main.width = '74%';
-    const h = Math.max(12, Math.min(17, Math.floor(inner * 0.48)));
+    const h = Math.max(15, Math.min(20, Math.floor(inner * 0.55)));
     layout.main.height = h;
   }
 }
@@ -174,12 +174,25 @@ function stopBootLoader() {
   }
 }
 
+const BOOT_PHASES = {
+  init:          { step: 0, label: 'Initializing',                  detail: 'Setting up wa-tui' },
+  launching:     { step: 1, label: 'Launching browser',             detail: 'Starting headless Chrome' },
+  waiting_auth:  { step: 2, label: 'Connecting',                    detail: 'Opening WhatsApp Web' },
+  qr:            { step: 3, label: 'Waiting for QR scan',           detail: 'Scan QR code with your phone' },
+  authenticated: { step: 4, label: 'Authenticated',                 detail: 'Session established' },
+  syncing:       { step: 5, label: 'Syncing',                       detail: 'Loading WhatsApp data' },
+  loading_chats: { step: 6, label: 'Loading chats',                 detail: 'Fetching conversations' },
+  ready:         { step: 7, label: 'Ready',                         detail: '' },
+};
+const BOOT_TOTAL_STEPS = 7;
+
 function bootLoaderFrame(n) {
-  const spin = [' ◐ ', ' ◓ ', ' ◑ ', ' ◒ '];
+  const spin = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   const s = spin[n % spin.length];
   const A = theme.accent.slice(1);
   const D = theme.fgDim.slice(1);
   const L = theme.fg.slice(1);
+  const E = theme.error.slice(1);
   const logoLines = [
     ' ██╗    ██╗ █████╗     ████████╗██╗   ██╗██╗',
     ' ██║    ██║██╔══██╗    ╚══██╔══╝██║   ██║██║',
@@ -204,6 +217,41 @@ function bootLoaderFrame(n) {
     .join('\n');
   const boxBottom = `{#${A}-fg}    ╰${'─'.repeat(innerWidth)}╯{/}`;
   const byline = `{#${D}-fg}${center('by gtchakama')}{/}`;
+
+  // Phase info
+  const phase = BOOT_PHASES[state.loadingPhase] || BOOT_PHASES.init;
+  const isError = state.loadingPhase === 'auth_failure' || state.loadingPhase === 'disconnected';
+
+  // Progress bar
+  const barWidth = innerWidth - 8;
+  const filled = Math.round((phase.step / BOOT_TOTAL_STEPS) * barWidth);
+  const empty = barWidth - filled;
+  const bar = `{#${A}-fg}${'█'.repeat(filled)}{/}{#${D}-fg}${'░'.repeat(empty)}{/}`;
+
+  // Status line
+  let statusLine;
+  if (isError) {
+    const errMsg = state.loadingPhase === 'auth_failure'
+      ? 'Authentication failed — check session or restart'
+      : `Disconnected: ${state.error || 'connection lost'}`;
+    statusLine = `    {#${E}-fg}✖ ${errMsg}{/}`;
+  } else {
+    // Sync percent from WhatsApp loading screen
+    const syncSuffix = state.loadingPhase === 'syncing' && state._syncPercent != null
+      ? ` (${state._syncPercent}%)`
+      : '';
+    statusLine = `    {#${A}-fg}${s}{/} {#${L}-fg}${phase.label}${syncSuffix}{/}  {#${D}-fg}${phase.detail}{/}`;
+  }
+
+  // Step indicators
+  const steps = ['init', 'launching', 'waiting_auth', 'authenticated', 'syncing', 'loading_chats'];
+  const stepDots = steps.map((key) => {
+    const p = BOOT_PHASES[key];
+    if (p.step < phase.step) return `{#${A}-fg}●{/}`;
+    if (p.step === phase.step && !isError) return `{#${L}-fg}○{/}`;
+    return `{#${D}-fg}·{/}`;
+  }).join(' ');
+
   return (
     `${boxTop}\n` +
     `${boxBody}\n` +
@@ -211,9 +259,26 @@ function bootLoaderFrame(n) {
     `\n` +
     `${byline}\n` +
     `\n` +
-    `      {#${A}-fg}${s}{/}{#${D}-fg} session handshake  ${s}{/}\n` +
-    `      {#${D}-fg}· · ·  connecting to WhatsApp Web  · · ·{/}`
+    `    ${bar}\n` +
+    `${statusLine}\n` +
+    `    ${stepDots}`
   );
+}
+
+function updateBootPhase(ev) {
+  if (state.screen !== 'loading') return;
+  if (ev.phase === 'syncing') {
+    state.loadingPhase = 'syncing';
+    state._syncPercent = ev.percent != null ? ev.percent : state._syncPercent;
+  } else if (ev.phase === 'auth_failure') {
+    state.loadingPhase = 'auth_failure';
+    state.error = ev.message || 'Authentication failed';
+  } else if (ev.phase === 'disconnected') {
+    state.loadingPhase = 'disconnected';
+    state.error = ev.reason || 'Connection lost';
+  } else if (BOOT_PHASES[ev.phase]) {
+    state.loadingPhase = ev.phase;
+  }
 }
 
 function startBootLoader() {
@@ -640,7 +705,10 @@ async function performLogout() {
 
 function updateTitle() {
   let modeText = state.screen.toUpperCase();
-  if (state.searchOpen) {
+  if (state.screen === 'loading') {
+    const phase = BOOT_PHASES[state.loadingPhase] || BOOT_PHASES.init;
+    modeText = phase.label.toUpperCase();
+  } else if (state.searchOpen) {
     modeText = 'SEARCH · Fuzzy finder';
   } else if (state.screen === 'chats') {
     const u = state.unreadOnly ? ' · unread' : '';
@@ -2343,10 +2411,8 @@ async function openChat(chatOrId) {
 }
 
 function handleReady() {
-  stopBootLoader();
-  layout.main.setContent(
-    `{${theme.fgDim}-fg}WhatsApp ready — loading chats…{/${theme.fgDim}-fg}`
-  );
+  state.loadingPhase = 'loading_chats';
+  // Keep boot loader running for the last phase — it will show the progress bar at ~85%
   screen.render();
   void waService.installRemoteTypingBridge();
   refreshChats();
@@ -2608,5 +2674,6 @@ module.exports = {
   init,
   showQr,
   handleReady,
+  updateBootPhase,
   applyPalette
 };

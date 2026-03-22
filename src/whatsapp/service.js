@@ -254,17 +254,35 @@ class WhatsAppService extends EventEmitter {
   }
 
   initialize(onQr, onReady, onAuth) {
+    this.emit('lifecycle', { phase: 'launching' });
+
+    this.client.on('loading_screen', (percent, message) => {
+      this.emit('lifecycle', { phase: 'syncing', percent, message });
+    });
+
     this.client.on('qr', (qr) => {
+      this.emit('lifecycle', { phase: 'qr' });
       onQr(qr);
     });
 
     this.client.on('ready', () => {
       this.ready = true;
+      this.emit('lifecycle', { phase: 'ready' });
       onReady();
     });
 
     this.client.on('authenticated', () => {
+      this.emit('lifecycle', { phase: 'authenticated' });
       if (onAuth) onAuth();
+    });
+
+    this.client.on('auth_failure', (msg) => {
+      this.emit('lifecycle', { phase: 'auth_failure', message: msg });
+    });
+
+    this.client.on('disconnected', (reason) => {
+      this.ready = false;
+      this.emit('lifecycle', { phase: 'disconnected', reason });
     });
 
     this.client.on('message_ack', (msg, ack) => {
@@ -326,10 +344,7 @@ class WhatsAppService extends EventEmitter {
       })();
     });
 
-    this.client.on('auth_failure', (msg) => {
-      console.error('Authentication failure:', msg);
-    });
-
+    this.emit('lifecycle', { phase: 'waiting_auth' });
     return this.client.initialize();
   }
 

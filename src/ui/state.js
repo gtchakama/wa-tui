@@ -22,6 +22,8 @@ const state = {
   page: 1,
   pageSize: 10,
   loading: true,
+  /** 'init' | 'launching' | 'waiting_auth' | 'qr' | 'authenticated' | 'syncing' | 'loading_chats' | 'ready' */
+  loadingPhase: 'init',
   error: null,
   unreadCount: 0,
   searchOpen: false,
