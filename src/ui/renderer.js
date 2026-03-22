@@ -1,7 +1,5 @@
 const blessed = require('neo-blessed');
 const qrcode = require('qrcode-terminal');
-const stringWidth = require('string-width');
-const wrapAnsi = require('wrap-ansi');
 const { MessageAck } = require('whatsapp-web.js');
 const state = require('./state');
 const waService = require('../whatsapp/service');
@@ -321,69 +319,25 @@ function ackSuffix(ack) {
   return ` {#${d}-fg}…{/}`;
 }
 
-function plainAckSuffix(ack) {
-  if (ack === undefined || ack === null) return '';
-  if (ack === MessageAck.ACK_ERROR) return ' [error]';
-  if (ack === MessageAck.ACK_READ || ack === MessageAck.ACK_PLAYED) {
-    return ' [read]';
-  }
-  if (ack === MessageAck.ACK_DEVICE) return ' [delivered]';
-  if (ack === MessageAck.ACK_SERVER) return ' [sent]';
-  return ' [pending]';
-}
-
-function sanitizeTranscriptText(value) {
-  return String(value == null ? '' : value)
-    .replace(/\r\n?/g, '\n')
-    .replace(/\t/g, '  ')
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-    .replace(/\{/g, '(')
-    .replace(/\}/g, ')');
-}
-
-function transcriptContentWidth() {
-  return Math.max(12, (Number(layout.msgList?.width) || 0) - 1);
-}
-
-function wrapTranscriptBody(prefix, body, width) {
-  const prefixWidth = stringWidth(prefix);
-  const bodyWidth = Math.max(10, width - prefixWidth);
-  const wrapped = wrapAnsi(body, bodyWidth, {
-    hard: true,
-    trim: false,
-    wordWrap: false
-  }).split('\n');
-  const indent = ' '.repeat(prefixWidth);
-  return wrapped
-    .map((line, index) => (index === 0 ? `${prefix}${line}` : `${indent}${line}`))
-    .join('\n');
-}
-
-function formatTranscriptRow(row) {
-  const mark = state.replyTo && row.id === state.replyTo.id ? '> ' : '  ';
-  const author = sanitizeTranscriptText(row.fromMe ? 'You' : row.author || 'Unknown');
-  const prefix = `[${formatTimestamp(row.timestamp)}] ${mark}${author}: `;
-  const body = sanitizeTranscriptText(augmentDisplayPlain(row) || '—');
-  const ack = row.fromMe ? plainAckSuffix(row.ack) : '';
-  return wrapTranscriptBody(prefix, `${body}${ack}`, transcriptContentWidth());
-}
-
 function appendMsgListLine(payload) {
+  const { fromMe, author, timestamp, id } = payload;
   if (!layout.msgList) return;
   const row = {
-    id: payload.id,
     type: payload.type || 'chat',
     hasMedia: Boolean(payload.hasMedia),
     hasQuotedMsg: Boolean(payload.hasQuotedMsg),
     quotedSnippet: payload.quotedSnippet || '',
     body: payload.body,
-    localPath: (payload.id && state.mediaPaths[payload.id]) || payload.localPath,
-    fromMe: Boolean(payload.fromMe),
-    author: payload.author,
-    timestamp: payload.timestamp,
-    ack: payload.ack
+    localPath: (id && state.mediaPaths[id]) || payload.localPath
   };
-  layout.msgList.add(formatTranscriptRow(row));
+  const nameColor = fromMe ? theme.selfMsg : theme.peerMsg;
+  const name = fromMe
+    ? `{bold}{${nameColor}-fg}You{/${nameColor}-fg}{/bold}`
+    : `{bold}{${nameColor}-fg}${author}{/${nameColor}-fg}{/bold}`;
+  const time = formatTimestamp(timestamp);
+  const text = augmentDisplayPlain(row).replace(/\{/g, '(');
+  const ack = fromMe ? ackSuffix(payload.ack) : '';
+  layout.msgList.add(`[${time}] ${name}: ${text}${ack}`);
   try {
     layout.msgList.scrollTo(layout.msgList.getScrollHeight());
   } catch (_) {}
@@ -701,7 +655,7 @@ function updateReplyBarContent() {
   const A = theme.accent.slice(1);
   const D = theme.fgDim.slice(1);
   layout.replyBar.setContent(
-    `{#${A}-fg}↪{/} ${sanitizeTranscriptText(state.replyTo.author)}: ${sanitizeTranscriptText(sn)}  {#${D}-fg}Esc clear · Ctrl+↑↓{/}`
+    `{#${A}-fg}↪{/} ${state.replyTo.author}: ${sn.replace(/\{/g, '(')}  {#${D}-fg}Esc clear · Ctrl+↑↓{/}`
   );
 }
 
@@ -715,9 +669,23 @@ function rowsWithPaths() {
 function redrawChatMessages() {
   if (!layout.msgList) return;
   if (!state.currentMessages.length) return;
+  const A = theme.accent.slice(1);
   const rows = rowsWithPaths();
   const content = rows
-    .map((m) => formatTranscriptRow(m))
+    .map((m) => {
+      const nc = (m.fromMe ? theme.selfMsg : theme.peerMsg).slice(1);
+      const name = m.fromMe
+        ? `{bold}{#${nc}-fg}You{/#${nc}-fg}{/bold}`
+        : `{bold}{#${nc}-fg}${m.author}{/#${nc}-fg}{/bold}`;
+      const time = formatTimestamp(m.timestamp);
+      const mark =
+        state.replyTo && m.id === state.replyTo.id
+          ? `{#${A}-fg}▶ {/#${A}-fg}`
+          : '';
+      const plain = augmentDisplayPlain(m).replace(/\{/g, '(');
+      const ack = m.fromMe ? ackSuffix(m.ack) : '';
+      return `[${time}] ${mark}${name}: ${plain}${ack}`;
+    })
     .join('\n');
   layout.msgList.setContent(content);
 }
@@ -758,7 +726,8 @@ function adjustReplyPick(delta) {
   state.replyTo = {
     id: m.id,
     author: m.author,
-    snippet: sanitizeTranscriptText(m.displayBody || m.body || '')
+    snippet: String(m.displayBody || m.body || '')
+      .replace(/\{/g, '(')
       .slice(0, 48)
   };
   finishReplyUi();
@@ -804,7 +773,10 @@ async function downloadHighlightedMedia() {
     targetId = withMedia?.id;
   }
   if (!targetId) {
-    layout.msgList.add('No media to download. Use Ctrl+Down to pick a message.');
+    const er = theme.error.slice(1);
+    layout.msgList.add(
+      `{#${er}-fg}No media to download — Ctrl+↓ to pick a message.{/#${er}-fg}`
+    );
     screen.render();
     return;
   }
@@ -816,9 +788,11 @@ async function downloadHighlightedMedia() {
     );
     state.mediaPaths[targetId] = fpath;
     redrawChatMessages();
-    layout.msgList.add(`Saved: ${sanitizeTranscriptText(fpath)}`);
+    const d = theme.fgDim.slice(1);
+    layout.msgList.add(`{#${d}-fg}Saved: ${fpath.replace(/\{/g, '(')}{/#${d}-fg}`);
   } catch (e) {
-    layout.msgList.add(`Download failed: ${sanitizeTranscriptText(e.message)}`);
+    const er = theme.error.slice(1);
+    layout.msgList.add(`{#${er}-fg}Download failed: ${e.message}{/#${er}-fg}`);
   }
   screen.render();
 }
@@ -861,9 +835,6 @@ function init() {
       return;
     }
     syncListAndDetailHeights();
-    if (state.screen === 'chatDetail' && state.currentMessages.length) {
-      redrawChatMessages();
-    }
     syncSettingsListGeometry();
     syncQrLayout();
     screen.render();
@@ -1185,11 +1156,11 @@ function renderChatDetailMeta() {
     chat && chat.isGroup ? 'group' : 'direct message',
     '',
     `{bold}chat{/bold}`,
-    sanitizeTranscriptText(state.currentChatName || 'Unknown'),
+    (state.currentChatName || 'Unknown').replace(/\{/g, '('),
     '',
     `{bold}reply target{/bold}`,
     state.replyTo
-      ? sanitizeTranscriptText(`${state.replyTo.author}: ${state.replyTo.snippet}`)
+      ? `${state.replyTo.author}: ${state.replyTo.snippet}`.replace(/\{/g, '(')
       : 'none',
     '',
     `{bold}your messages{/bold}`,
@@ -1278,8 +1249,7 @@ function ensureChatDetailLayout() {
     mouse: true,
     scrollable: true,
     alwaysScroll: true,
-    tags: false,
-    wrap: false,
+    tags: true,
     padding: { left: 0, right: 0 },
     transparent: false,
     style: { fg: theme.fg }
@@ -1346,7 +1316,8 @@ function ensureChatDetailLayout() {
       layout.input.focus();
       screen.render();
     } catch (e) {
-      layout.msgList.add(`Failed to send: ${sanitizeTranscriptText(e.message)}`);
+      const er = theme.error.slice(1);
+      layout.msgList.add(`{#${er}-fg}Failed to send: ${e.message}{/#${er}-fg}`);
       screen.render();
     }
   });
@@ -1791,7 +1762,7 @@ async function openChat(chatOrId) {
   setPaneActive(layout.chatListPane, false);
   setPaneActive(layout.chatDetailMain, true);
   setPaneActive(layout.chatDetailSide, false);
-  layout.msgList.setContent('Loading messages...');
+  layout.msgList.setContent(`{${theme.fgDim}-fg}Loading messages…{/${theme.fgDim}-fg}`);
   renderChatDetailMeta();
   updateTitle();
   screen.render();
@@ -1801,7 +1772,8 @@ async function openChat(chatOrId) {
     messages = await waService.getMessages(chat.id, 40, chat.raw);
   } catch (e) {
     state.loading = false;
-    layout.msgList.setContent(`Error loading messages: ${sanitizeTranscriptText(e.message)}`);
+    const er = theme.error.slice(1);
+    layout.msgList.setContent(`{#${er}-fg}Error loading messages: ${e.message}{/#${er}-fg}`);
     screen.render();
     return;
   }
@@ -1811,7 +1783,9 @@ async function openChat(chatOrId) {
   state.currentMessages = messages;
 
   if (!messages || messages.length === 0) {
-    layout.msgList.setContent('No messages found.');
+    layout.msgList.setContent(
+      `{${theme.fgDim}-fg}No messages found.{/${theme.fgDim}-fg}`
+    );
   } else {
     redrawChatMessages();
     layout.msgList.scrollTo(layout.msgList.getScrollHeight());
