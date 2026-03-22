@@ -1,6 +1,6 @@
 {
   "name": "@gtchakama/wa-tui",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Terminal UI for WhatsApp Web (blessed + whatsapp-web.js)",
   "main": "src/index.js",
   "bin": {
@@ -40,6 +40,7 @@
   },
   "homepage": "https://github.com/gtchakama/wa-tui#readme",
   "dependencies": {
+    "@puppeteer/browsers": "^2.13.0",
     "chromium-bidi": "^15.0.0",
     "neo-blessed": "^0.2.0",
     "puppeteer-core": "^24.40.0",

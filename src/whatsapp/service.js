@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { install, detectBrowserPlatform, Browser } = require('@puppeteer/browsers');
 const {
   Client,
   LocalAuth,
@@ -56,6 +55,7 @@ function cleanStaleChromeCache() {
  */
 async function installBrowser(onProgress) {
   cleanStaleChromeCache();
+  const { install, detectBrowserPlatform, Browser } = require('@puppeteer/browsers');
   const { PUPPETEER_REVISIONS } = require('puppeteer-core/lib/cjs/puppeteer/revisions.js');
   const cacheDir = path.join(os.homedir(), '.cache', 'puppeteer');
   await install({
