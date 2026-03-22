@@ -1,6 +1,6 @@
 {
   "name": "@gtchakama/wa-tui",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Terminal UI for WhatsApp Web (blessed + whatsapp-web.js)",
   "main": "src/index.js",
   "bin": {

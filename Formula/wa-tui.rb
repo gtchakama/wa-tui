@@ -1,7 +1,7 @@
 class WaTui < Formula
   desc "Terminal UI for WhatsApp Web"
   homepage "https://github.com/gtchakama/wa-tui"
-  url "https://github.com/gtchakama/wa-tui/archive/refs/tags/v1.6.1.tar.gz"
+  url "https://github.com/gtchakama/wa-tui/archive/refs/tags/v1.7.0.tar.gz"
   license "ISC"
 
   livecheck do

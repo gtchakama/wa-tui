@@ -1640,8 +1640,8 @@ function syncQrLayout() {
   layout.qrPaneBody.width = layout.qrPane._inner.width;
   layout.qrPaneBody.height = layout.qrPane._inner.height;
   if (layout.qrBox) {
-    layout.qrBox.top = Math.max(1, Math.floor((layout.qrPaneBody.height - layout.qrBox.height) / 2));
-    layout.qrBox.left = Math.max(1, Math.floor((layout.qrPaneBody.width - layout.qrBox.width) / 2));
+    layout.qrBox.width = layout.qrPaneBody.width;
+    layout.qrBox.height = layout.qrPaneBody.height;
   }
 }
 
@@ -1686,16 +1686,14 @@ function ensureQrLayout() {
     parent: layout.qrPaneBody,
     top: 0,
     left: 0,
-    width: 42,
-    height: 18,
-    border: 'line',
+    width: '100%',
+    height: '100%',
     tags: true,
     align: 'center',
     valign: 'middle',
     transparent: true,
     style: {
-      fg: theme.fg,
-      border: { fg: theme.fgDim }
+      fg: theme.fg
     }
   });
 
