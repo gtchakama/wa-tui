@@ -1,9 +1,15 @@
 class WaTui < Formula
   desc "Terminal UI for WhatsApp Web"
   homepage "https://github.com/gtchakama/wa-tui"
-  url "https://registry.npmjs.org/@gtchakama/wa-tui/-/wa-tui-1.4.4.tgz"
-  sha256 "7a0b665178511f0a75fea20bf2ab9c093b1119fc727fc47258f942eec446f46c"
+  url "https://github.com/gtchakama/wa-tui/archive/refs/tags/v1.6.0.tar.gz"
   license "ISC"
+
+  livecheck do
+    url :stable
+    regex(/^v?(\d+(?:\.\d+)+)$/i)
+  end
+
+  head "https://github.com/gtchakama/wa-tui.git", branch: "main"
 
   depends_on "node"
 

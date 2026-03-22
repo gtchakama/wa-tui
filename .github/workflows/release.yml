@@ -1,0 +1,45 @@
+name: Create GitHub Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect version bump
+        id: version
+        run: |
+          NEW=$(node -p "require('./package.json').version")
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            OLD=$(git show HEAD~1:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          else
+            OLD=""
+          fi
+          if [ "$OLD" = "$NEW" ]; then
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and release
+        if: steps.version.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ steps.version.outputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes

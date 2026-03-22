@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawn } = require('child_process');
+const { install, detectBrowserPlatform, Browser } = require('@puppeteer/browsers');
 const {
   Client,
   LocalAuth,
@@ -51,27 +51,23 @@ function cleanStaleChromeCache() {
 
 /**
  * Install Puppeteer's Chrome, emitting progress via the provided callback.
+ * Uses @puppeteer/browsers Node API for reliable progress reporting.
  * @param {(percent: number) => void} onProgress
  */
-function installBrowser(onProgress) {
+async function installBrowser(onProgress) {
   cleanStaleChromeCache();
-  return new Promise((resolve, reject) => {
-    const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    const child = spawn(npx, ['puppeteer', 'browsers', 'install', 'chrome'], {
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-    const handleData = (chunk) => {
-      const text = chunk.toString();
-      const match = text.match(/(\d+)%/);
-      if (match) onProgress(parseInt(match[1], 10));
-    };
-    child.stdout.on('data', handleData);
-    child.stderr.on('data', handleData);
-    child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`Browser install exited with code ${code}`));
-    });
-    child.on('error', reject);
+  const { PUPPETEER_REVISIONS } = require('puppeteer-core/lib/cjs/puppeteer/revisions.js');
+  const cacheDir = path.join(os.homedir(), '.cache', 'puppeteer');
+  await install({
+    browser: Browser.CHROME,
+    buildId: PUPPETEER_REVISIONS.chrome,
+    platform: detectBrowserPlatform(),
+    cacheDir,
+    downloadProgressCallback: (downloadedBytes, totalBytes) => {
+      if (totalBytes > 0) {
+        onProgress(Math.round((downloadedBytes / totalBytes) * 100));
+      }
+    }
   });
 }
 
