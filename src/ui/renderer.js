@@ -60,6 +60,11 @@ const layout = {
   chatDetailSideBody: null,
   replyBar: null,
   typingBar: null,
+  searchRoot: null,
+  searchPrompt: null,
+  searchInput: null,
+  searchMeta: null,
+  searchResults: null,
   settingsList: null,
   settingsRoot: null,
   settingsListPane: null,
@@ -76,6 +81,7 @@ const layout = {
 let bootLoaderInterval = null;
 let currentChatPageItems = [];
 let chatPreviewToken = 0;
+let currentSearchEntries = [];
 let settingsPreviewPaletteId = normalizePaletteId(loadSettings().palette);
 const CHAT_LIST_ITEM_LINES = 2;
 
@@ -140,6 +146,12 @@ function resizePaneInner(pane) {
   pane._inner.height = Math.max(2, pane.height - 2);
 }
 
+function safeTagText(value) {
+  return String(value == null ? '' : value)
+    .replace(/\{/g, '(')
+    .replace(/\}/g, ')');
+}
+
 function layoutMainPanel(phase) {
   if (!layout.main) return;
   const inner = innerRows();
@@ -168,12 +180,35 @@ function bootLoaderFrame(n) {
   const A = theme.accent.slice(1);
   const D = theme.fgDim.slice(1);
   const L = theme.fg.slice(1);
+  const logoLines = [
+    '__        __  _         _____  _   _  ___ ',
+    '\\ \\      / / / \\       |_   _|| | | ||_ _|',
+    ' \\ \\ /\\ / / / _ \\        | |  | | | | | | ',
+    '  \\ V  V / / ___ \\       | |  | |_| | | | ',
+    '   \\_/\\_/ /_/   \\_\\      |_|   \\___/ |___|',
+  ];
+  const innerWidth = logoLines.reduce((max, line) => Math.max(max, line.length), 0) + 6;
+  const center = (text) => {
+    const gap = Math.max(0, innerWidth - text.length);
+    const left = Math.floor(gap / 2);
+    const right = gap - left;
+    return `${' '.repeat(left)}${text}${' '.repeat(right)}`;
+  };
+  const boxTop = `{#${A}-fg}    ╭${'─'.repeat(innerWidth)}╮{/}`;
+  const boxBody = logoLines
+    .map(
+      (line) =>
+        `{#${A}-fg}    │{/}{#${L}-fg}${center(line)}{/}{#${A}-fg}│{/}`
+    )
+    .join('\n');
+  const boxBottom = `{#${A}-fg}    ╰${'─'.repeat(innerWidth)}╯{/}`;
+  const byline = `{#${D}-fg}${center('by gtchakama')}{/}`;
   return (
-    `{#${A}-fg}    ╭──────────────────────────╮{/}\n` +
-    `{#${A}-fg}    │{/}    {#${L}-fg}╦ ╦┌─┐┬┌┬┐┬ ┬{/}       {#${A}-fg}│{/}\n` +
-    `{#${A}-fg}    │{/}    {#${L}-fg}║║║├─┤│ │ ├─┤{/}       {#${A}-fg}│{/}\n` +
-    `{#${A}-fg}    │{/}    {#${L}-fg}╚╩╝┴ ┴┴ ┴ ┴ ┴{/}       {#${A}-fg}│{/}\n` +
-    `{#${A}-fg}    ╰──────────────────────────╯{/}\n` +
+    `${boxTop}\n` +
+    `${boxBody}\n` +
+    `${boxBottom}\n` +
+    `\n` +
+    `${byline}\n` +
     `\n` +
     `      {#${A}-fg}${s}{/}{#${D}-fg} session handshake  ${s}{/}\n` +
     `      {#${D}-fg}· · ·  connecting to WhatsApp Web  · · ·{/}`
@@ -427,6 +462,37 @@ function refreshWidgetStyles() {
     layout.typingBar.style.fg = theme.fgDim;
     delete layout.typingBar.style.bg;
   }
+  if (layout.searchRoot) {
+    layout.searchRoot.style.fg = theme.fg;
+    delete layout.searchRoot.style.bg;
+  }
+  if (layout.searchInput) {
+    layout.searchInput.style.fg = theme.fg;
+    delete layout.searchInput.style.bg;
+  }
+  if (layout.searchMeta) {
+    layout.searchMeta.style.fg = theme.fgDim;
+    delete layout.searchMeta.style.bg;
+  }
+  if (layout.searchPrompt) {
+    layout.searchPrompt.style.fg = theme.fgDim;
+    delete layout.searchPrompt.style.bg;
+  }
+  if (layout.searchResults) {
+    layout.searchResults.style.fg = theme.fg;
+    delete layout.searchResults.style.bg;
+    if (layout.searchResults.style.selected) {
+      layout.searchResults.style.selected.fg = theme.accent;
+      layout.searchResults.style.selected.bold = true;
+      layout.searchResults.style.selected.underline = true;
+      delete layout.searchResults.style.selected.bg;
+    }
+    if (layout.searchResults.style.scrollbar) {
+      layout.searchResults.style.scrollbar.fg = theme.fgDim;
+      delete layout.searchResults.style.scrollbar.bg;
+    }
+    if (layout.searchResults.style.track) delete layout.searchResults.style.track.bg;
+  }
   if (layout.settingsList) {
     layout.settingsList.style.fg = theme.fg;
     delete layout.settingsList.style.bg;
@@ -449,6 +515,7 @@ function refreshWidgetStyles() {
     layout.chatMetaPane,
     layout.chatDetailMain,
     layout.chatDetailSide,
+    layout.searchRoot,
     layout.settingsListPane,
     layout.settingsPreviewPane,
     layout.qrStepsPane,
@@ -515,6 +582,9 @@ function applyPalette(paletteId) {
     renderSettingsPreview(id);
     syncSettingsItems();
   }
+  if (state.searchOpen) {
+    setPaneActive(layout.searchRoot, true);
+  }
 }
 
 function createFooter() {
@@ -536,15 +606,18 @@ function createFooter() {
 function updateFooter() {
   if (!layout.footer) return;
   let line;
-  if (state.screen === 'settings') {
+  if (state.searchOpen) {
+    line =
+      ' [Enter]: open · [↑↓]: move · [Esc]: close · [Ctrl+K]: toggle finder';
+  } else if (state.screen === 'settings') {
     line =
       ' [Enter]: apply palette · [Esc]/[F2]: back · Saved: ~/.wa-tui/settings.json · [Q]: Quit';
   } else if (state.screen === 'chatDetail') {
     line =
-      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+↑↓]: Quote · [Ctrl+D]: DL · typing + receipts · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit';
+      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+K]: Search · [Ctrl+↑↓]: Quote · [Ctrl+D]: DL · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit';
   } else if (state.screen === 'chats') {
     line =
-      ' [Q]: Quit · [F2]: Colours · ctrl+L Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort';
+      ' [Q]: Quit · [Ctrl+K]: Search · [F2]: Colours · [Ctrl+L]: Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort';
   } else {
     line = ' [Q]: Quit · [Ctrl+L]: Logout';
   }
@@ -566,7 +639,9 @@ async function performLogout() {
 
 function updateTitle() {
   let modeText = state.screen.toUpperCase();
-  if (state.screen === 'chats') {
+  if (state.searchOpen) {
+    modeText = 'SEARCH · Fuzzy finder';
+  } else if (state.screen === 'chats') {
     const u = state.unreadOnly ? ' · unread' : '';
     const sortLabel =
       state.chatSort === 'unread'
@@ -597,6 +672,7 @@ function hidePrimaryViews() {
   layout.main?.hide();
   layout.chatBrowser?.hide();
   layout.chatDetail?.hide();
+  layout.searchRoot?.hide();
   layout.settingsRoot?.hide();
   layout.qrRoot?.hide();
 }
@@ -681,6 +757,8 @@ function redrawChatMessages() {
       const mark =
         state.replyTo && m.id === state.replyTo.id
           ? `{#${A}-fg}▶ {/#${A}-fg}`
+          : state.searchHitMessageId && m.id === state.searchHitMessageId
+            ? `{#${A}-fg}◆ {/#${A}-fg}`
           : '';
       const plain = augmentDisplayPlain(m).replace(/\{/g, '(');
       const ack = m.fromMe ? ackSuffix(m.ack) : '';
@@ -830,6 +908,16 @@ function init() {
 
   screen.on('resize', () => {
     if (state.screen === 'loading') layoutMainPanel('loading');
+    if (state.searchOpen) {
+      if (state.screen === 'chats') showChats(state.chats);
+      else syncListAndDetailHeights();
+      syncSearchLayout();
+      layout.searchRoot?.show();
+      layout.searchRoot?.setFront?.();
+      updateSearchMeta();
+      screen.render();
+      return;
+    }
     if (state.screen === 'chats') {
       showChats(state.chats);
       return;
@@ -1391,7 +1479,7 @@ function ensureQrLayout() {
     style: { fg: theme.fg }
   });
 
-  layout.qrPane = makePane(layout.qrRoot, ' scan_with_whatsapp ');
+  layout.qrPane = makePane(layout.qrRoot, ' wa-tui by gtchakama ');
   layout.qrPaneBody = blessed.box({
     parent: layout.qrPane._inner,
     top: 0,
@@ -1616,6 +1704,447 @@ function closeSettings() {
   void refreshChats();
 }
 
+function searchGeometry() {
+  const totalWidth = screen.width || 100;
+  const totalHeight = innerRows();
+  const width = Math.max(56, Math.min(totalWidth - 6, Math.floor(totalWidth * 0.76)));
+  const height = Math.max(12, Math.min(totalHeight - 2, Math.floor(totalHeight * 0.72)));
+  return {
+    top: 1 + Math.max(0, Math.floor((totalHeight - height) / 2)),
+    left: Math.max(0, Math.floor((totalWidth - width) / 2)),
+    width,
+    height
+  };
+}
+
+function syncSearchLayout() {
+  if (!layout.searchRoot) return;
+  const { top, left, width, height } = searchGeometry();
+  layout.searchRoot.top = top;
+  layout.searchRoot.left = left;
+  layout.searchRoot.width = width;
+  layout.searchRoot.height = height;
+  resizePaneInner(layout.searchRoot);
+
+  layout.searchPrompt.top = 0;
+  layout.searchPrompt.left = 0;
+  layout.searchPrompt.width = layout.searchRoot._inner.width;
+  layout.searchPrompt.height = 1;
+
+  layout.searchInput.top = 1;
+  layout.searchInput.left = 0;
+  layout.searchInput.width = layout.searchRoot._inner.width;
+  layout.searchInput.height = 1;
+
+  layout.searchMeta.top = 2;
+  layout.searchMeta.left = 0;
+  layout.searchMeta.width = layout.searchRoot._inner.width;
+  layout.searchMeta.height = 1;
+
+  layout.searchResults.top = 3;
+  layout.searchResults.left = 0;
+  layout.searchResults.width = layout.searchRoot._inner.width;
+  layout.searchResults.height = Math.max(4, layout.searchRoot._inner.height - 3);
+}
+
+function searchQueryParts(query) {
+  return String(query || '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function fuzzySegmentScore(segment, text) {
+  if (!segment) return 0;
+  const haystack = String(text || '').toLowerCase();
+  const exactIndex = haystack.indexOf(segment);
+  let score = exactIndex >= 0 ? 40 - Math.min(20, exactIndex) : 0;
+  let lastIndex = -1;
+  let streak = 0;
+
+  for (const ch of segment) {
+    const idx = haystack.indexOf(ch, lastIndex + 1);
+    if (idx === -1) return -1;
+    if (idx === lastIndex + 1) {
+      streak += 1;
+      score += 6 + Math.min(4, streak);
+    } else {
+      streak = 0;
+      score += Math.max(0, 4 - Math.min(3, idx - lastIndex - 1));
+    }
+    if (idx === 0 || ' -_./:@'.includes(haystack[idx - 1] || '')) score += 5;
+    lastIndex = idx;
+  }
+
+  score += Math.max(0, 12 - Math.max(0, haystack.length - segment.length));
+  return score;
+}
+
+function fuzzyMatchScore(query, text) {
+  const parts = searchQueryParts(query);
+  if (!parts.length) return 0;
+  let score = 0;
+  for (const part of parts) {
+    const partScore = fuzzySegmentScore(part, text);
+    if (partScore < 0) return -1;
+    score += partScore;
+  }
+  return score;
+}
+
+function searchMessageRows() {
+  if (state.screen !== 'chatDetail' || !state.currentMessages.length) return [];
+  return rowsWithPaths();
+}
+
+function buildChatSearchEntries(query) {
+  const chats = state.allChats?.length ? state.allChats : state.chats;
+  if (!chats || !chats.length) return [];
+  if (!searchQueryParts(query).length) {
+    return chats.slice(0, 10).map((chat) => ({ kind: 'chat', chat }));
+  }
+  return chats
+    .map((chat) => {
+      const text = `${chat.name || ''} ${chat.lastMessage || ''} ${chat.id || ''}`;
+      const score = fuzzyMatchScore(query, text);
+      return score < 0 ? null : { kind: 'chat', chat, score };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || (a.chat.listIndex || 0) - (b.chat.listIndex || 0))
+    .slice(0, 12);
+}
+
+function buildMessageSearchEntries(query) {
+  const rows = searchMessageRows();
+  if (!rows.length) return [];
+  const ordered = [...rows].reverse();
+  if (!searchQueryParts(query).length) {
+    return ordered.slice(0, 8).map((message) => ({ kind: 'message', message }));
+  }
+  return ordered
+    .map((message) => {
+      const author = message.fromMe ? 'You' : message.author || '';
+      const text = `${author} ${augmentDisplayPlain(message)}`;
+      const score = fuzzyMatchScore(query, text);
+      return score < 0 ? null : { kind: 'message', message, score };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || (b.message.timestamp || 0) - (a.message.timestamp || 0))
+    .slice(0, 10);
+}
+
+function isSearchSelectableEntry(entry) {
+  return entry?.kind === 'chat' || entry?.kind === 'message';
+}
+
+function buildSearchEntries(query) {
+  const entries = [];
+  const chats = buildChatSearchEntries(query);
+  const messages = buildMessageSearchEntries(query);
+
+  if (chats.length) {
+    entries.push({ kind: 'section', label: 'Chats' });
+    entries.push(...chats);
+  }
+  if (messages.length) {
+    entries.push({ kind: 'section', label: 'Messages' });
+    entries.push(...messages);
+  }
+  if (!entries.some(isSearchSelectableEntry)) {
+    entries.push({
+      kind: 'empty',
+      label: searchQueryParts(query).length
+        ? 'No matches.'
+        : 'Type to search chats. Current-thread messages appear below when available.'
+    });
+  }
+  return entries;
+}
+
+function formatSearchEntry(entry) {
+  if (entry.kind === 'section') {
+    return `{${theme.fgDim}-fg}${entry.label.toUpperCase()}{/${theme.fgDim}-fg}`;
+  }
+  if (entry.kind === 'empty') {
+    return `{${theme.fgDim}-fg}${safeTagText(entry.label)}{/${theme.fgDim}-fg}`;
+  }
+  if (entry.kind === 'chat') {
+    const { chat } = entry;
+    const name = safeTagText(chat.name || 'Unknown');
+    const pin = chat.pinned
+      ? ` {${theme.accent}-fg}[pin]{/${theme.accent}-fg}`
+      : '';
+    const unread =
+      chat.unreadCount > 0
+        ? ` {${theme.unread}-fg}[${chat.unreadCount}]{/${theme.unread}-fg}`
+        : '';
+    const time = formatTimestamp(chat.timestamp || 0);
+    const preview = truncate(safeTagText(chat.lastMessage || '—'), 46);
+    return `${name}${pin}${unread} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg} · ${preview}`;
+  }
+  const { message } = entry;
+  const author = safeTagText(message.fromMe ? 'You' : message.author || 'Unknown');
+  const time = formatTimestamp(message.timestamp || 0);
+  const preview = truncate(safeTagText(augmentDisplayPlain(message)), 58);
+  return `${author} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg} · ${preview}`;
+}
+
+function findSearchSelectableIndex(start = 0, step = 1) {
+  if (!currentSearchEntries.length) return -1;
+  for (
+    let i = Math.max(0, Math.min(start, currentSearchEntries.length - 1));
+    i >= 0 && i < currentSearchEntries.length;
+    i += step
+  ) {
+    if (isSearchSelectableEntry(currentSearchEntries[i])) return i;
+  }
+  return -1;
+}
+
+function updateSearchMeta() {
+  if (!layout.searchMeta) return;
+  const chatCount = currentSearchEntries.filter((entry) => entry.kind === 'chat').length;
+  const messageCount = currentSearchEntries.filter((entry) => entry.kind === 'message').length;
+  const selected = currentSearchEntries[layout.searchResults?.selected || 0];
+
+  if (selected?.kind === 'chat') {
+    layout.searchMeta.setContent(
+      `${selected.chat.isGroup ? 'group' : 'direct'} · ${formatTimestamp(selected.chat.timestamp || 0)} · Enter opens chat`
+    );
+    return;
+  }
+  if (selected?.kind === 'message') {
+    layout.searchMeta.setContent(
+      `current thread · ${formatTimestamp(selected.message.timestamp || 0)} · Enter highlights match`
+    );
+    return;
+  }
+
+  const scope =
+    state.screen === 'chatDetail'
+      ? `${chatCount} chats · ${messageCount} messages`
+      : `${chatCount} chats`;
+  layout.searchMeta.setContent(`${scope} · Enter opens selected result`);
+}
+
+function syncSearchResults() {
+  if (!layout.searchInput || !layout.searchResults) return;
+  const previous = layout.searchResults.selected || 0;
+  currentSearchEntries = buildSearchEntries(layout.searchInput.getValue());
+  layout.searchResults.setItems(currentSearchEntries.map(formatSearchEntry));
+
+  let next = isSearchSelectableEntry(currentSearchEntries[previous])
+    ? previous
+    : findSearchSelectableIndex(0, 1);
+  if (next < 0) next = 0;
+  layout.searchResults.select(next);
+  updateSearchMeta();
+  screen.render();
+}
+
+function moveSearchSelection(delta) {
+  if (!state.searchOpen || !layout.searchResults || !currentSearchEntries.length) return;
+  const step = delta < 0 ? -1 : 1;
+  let moves = Math.max(1, Math.abs(delta));
+  let index = layout.searchResults.selected || 0;
+
+  while (moves > 0) {
+    const next = findSearchSelectableIndex(index + step, step);
+    if (next < 0) break;
+    index = next;
+    moves -= 1;
+  }
+
+  layout.searchResults.select(index);
+  updateSearchMeta();
+  screen.render();
+}
+
+function revealSearchMessage(messageId) {
+  if (!layout.msgList || !messageId) return;
+  const idx = state.currentMessages.findIndex((message) => message.id === messageId);
+  if (idx < 0) return;
+  try {
+    layout.msgList.scrollTo(Math.max(0, idx - 3));
+  } catch (_) {}
+}
+
+async function activateSearchSelection() {
+  const entry = currentSearchEntries[layout.searchResults?.selected || 0];
+  if (!isSearchSelectableEntry(entry)) return;
+
+  if (entry.kind === 'chat') {
+    state.searchHitMessageId = null;
+    closeSearch();
+    if (state.screen === 'chatDetail' && chatIdsMatch(state.currentChatId, entry.chat.id)) {
+      layout.input?.focus();
+      screen.render();
+      return;
+    }
+    await openChat(entry.chat);
+    return;
+  }
+
+  state.searchHitMessageId = entry.message.id;
+  closeSearch();
+  redrawChatMessages();
+  revealSearchMessage(entry.message.id);
+  layout.input?.focus();
+  screen.render();
+}
+
+function ensureSearchLayout() {
+  if (layout.searchRoot) return;
+
+  layout.searchRoot = makePane(screen, ' find ', { transparent: false });
+  layout.searchRoot.hide();
+
+  layout.searchPrompt = blessed.box({
+    parent: layout.searchRoot._inner,
+    top: 0,
+    left: 0,
+    width: 10,
+    height: 1,
+    tags: true,
+    transparent: false,
+    style: { fg: theme.fgDim }
+  });
+
+  layout.searchInput = blessed.textbox({
+    parent: layout.searchRoot._inner,
+    top: 1,
+    left: 0,
+    width: 10,
+    height: 1,
+    keys: true,
+    mouse: true,
+    inputOnFocus: true,
+    transparent: false,
+    style: { fg: theme.fg }
+  });
+
+  layout.searchMeta = blessed.box({
+    parent: layout.searchRoot._inner,
+    top: 2,
+    left: 0,
+    width: 10,
+    height: 1,
+    tags: true,
+    transparent: false,
+    style: { fg: theme.fgDim }
+  });
+
+  layout.searchResults = blessed.list({
+    parent: layout.searchRoot._inner,
+    top: 3,
+    left: 0,
+    width: 10,
+    height: 10,
+    keys: true,
+    vi: true,
+    mouse: true,
+    tags: true,
+    invertSelected: false,
+    transparent: false,
+    scrollbar: {
+      ch: '│',
+      style: { fg: theme.fgDim }
+    },
+    style: {
+      fg: theme.fg,
+      selected: {
+        fg: theme.accent,
+        bold: true,
+        underline: true
+      }
+    }
+  });
+
+  layout.searchPrompt.setContent(
+    `{bold}Search{/bold} chats first · current-thread messages below`
+  );
+
+  layout.searchInput.on('keypress', (ch, key = {}) => {
+    if (!state.searchOpen) return;
+    if (key.name === 'down') {
+      moveSearchSelection(1);
+      return;
+    }
+    if (key.name === 'up') {
+      moveSearchSelection(-1);
+      return;
+    }
+    if (key.name === 'pagedown') {
+      moveSearchSelection(5);
+      return;
+    }
+    if (key.name === 'pageup') {
+      moveSearchSelection(-5);
+      return;
+    }
+    if (['enter', 'return', 'escape'].includes(key.name)) return;
+    setImmediate(syncSearchResults);
+  });
+
+  layout.searchInput.on('submit', () => {
+    void activateSearchSelection();
+  });
+
+  layout.searchInput.on('cancel', () => {
+    closeSearch();
+  });
+
+  layout.searchResults.on('select item', () => {
+    updateSearchMeta();
+    screen.render();
+  });
+
+  layout.searchResults.on('action', () => {
+    void activateSearchSelection();
+  });
+
+  syncSearchLayout();
+}
+
+function openSearch() {
+  if (state.screen !== 'chats' && state.screen !== 'chatDetail') return;
+  state.searchOpen = true;
+  state.searchReturnScreen = state.screen;
+  ensureSearchLayout();
+  syncSearchLayout();
+  refreshWidgetStyles();
+  setPaneActive(layout.searchRoot, true);
+  layout.searchRoot.show();
+  layout.searchRoot.setFront?.();
+  layout.searchInput.setValue('');
+  currentSearchEntries = [];
+  syncSearchResults();
+  layout.searchInput.focus();
+  updateTitle();
+  screen.render();
+}
+
+function closeSearch() {
+  if (!state.searchOpen) return;
+  const back = state.searchReturnScreen || state.screen;
+  state.searchOpen = false;
+  state.searchReturnScreen = null;
+  currentSearchEntries = [];
+  layout.searchInput?.clearValue();
+  layout.searchRoot?.hide();
+
+  if (back === 'chatDetail') {
+    layout.input?.focus();
+    redrawChatMessages();
+  } else if (back === 'chats') {
+    layout.chatList?.focus();
+  }
+
+  updateTitle();
+  screen.render();
+}
+
 function showQr(qr) {
   stopBootLoader();
   state.screen = 'qr';
@@ -1628,6 +2157,7 @@ function showQr(qr) {
   setPaneActive(layout.qrPane, false);
   const dim = theme.fgDim.slice(1);
   const fg = theme.fg.slice(1);
+  const accent = theme.accent.slice(1);
   layout.qrStepsBody.setContent(
     `{bold}Link steps{/bold}\n` +
       `1. Open WhatsApp on your phone.\n` +
@@ -1639,7 +2169,11 @@ function showQr(qr) {
       `.wwebjs_cache/\n\n` +
       `{#${dim}-fg}If the code expires, wa-tui refreshes it automatically.{/}`
   );
-  layout.qrBox.setContent(`{#${fg}-fg}Refreshing QR…{/}`);
+  layout.qrBox.setContent(
+    `{#${accent}-fg}{bold}wa-tui{/bold}{/#${accent}-fg}\n` +
+      `{#${dim}-fg}by gtchakama{/}\n\n` +
+      `{#${fg}-fg}Refreshing QR…{/}`
+  );
   layout.qrRoot.show();
   screen.render();
 
@@ -1743,6 +2277,7 @@ async function openChat(chatOrId) {
   }
 
   state.screen = 'chatDetail';
+  state.searchHitMessageId = null;
   state.currentChatId = chat.id;
   state.currentChatName = chat.name;
   state.currentRawChat = chat.raw;
@@ -1818,6 +2353,7 @@ function handleReady() {
 
 async function refreshChats() {
   let chats = await waService.getChats();
+  state.allChats = chats;
 
   if (state.filter === 'direct') {
     chats = chats.filter((c) => !c.isGroup);
@@ -1831,9 +2367,19 @@ async function refreshChats() {
   chats = applyChatSort(chats);
 
   showChats(chats);
+  if (state.searchOpen) {
+    layout.searchRoot?.show();
+    layout.searchRoot?.setFront?.();
+    syncSearchResults();
+    layout.searchInput?.focus();
+  }
 }
 
 screen.key(['escape'], () => {
+  if (state.searchOpen) {
+    closeSearch();
+    return;
+  }
   if (state.screen === 'settings') {
     closeSettings();
     return;
@@ -1855,6 +2401,7 @@ screen.key(['escape'], () => {
 });
 
 screen.key(['b'], () => {
+  if (state.searchOpen) return;
   if (state.screen !== 'chatDetail') return;
   void waService.clearOutgoingTyping(state.currentChatId, state.currentRawChat);
   clearOutgoingTypingSchedule();
@@ -1865,10 +2412,21 @@ screen.key(['b'], () => {
 });
 
 screen.key(['C-l'], () => {
+  if (state.searchOpen) return;
   void performLogout();
 });
 
+screen.key(['C-k'], () => {
+  if (state.screen !== 'chats' && state.screen !== 'chatDetail' && !state.searchOpen) return;
+  if (state.searchOpen) {
+    closeSearch();
+    return;
+  }
+  openSearch();
+});
+
 screen.key(['f2'], () => {
+  if (state.searchOpen) return;
   if (state.screen === 'settings') {
     closeSettings();
     return;
@@ -1877,30 +2435,35 @@ screen.key(['f2'], () => {
 });
 
 screen.key(['r'], () => {
+  if (state.searchOpen) return;
   if (state.screen === 'chats') {
     refreshChats();
   }
 });
 
 screen.key(['1'], () => {
+  if (state.searchOpen) return;
   state.filter = 'all';
   state.page = 1;
   refreshChats();
 });
 
 screen.key(['2'], () => {
+  if (state.searchOpen) return;
   state.filter = 'direct';
   state.page = 1;
   refreshChats();
 });
 
 screen.key(['3'], () => {
+  if (state.searchOpen) return;
   state.filter = 'groups';
   state.page = 1;
   refreshChats();
 });
 
 screen.key(['u', 'U'], () => {
+  if (state.searchOpen) return;
   if (state.screen !== 'chats') return;
   state.unreadOnly = !state.unreadOnly;
   state.page = 1;
@@ -1910,6 +2473,7 @@ screen.key(['u', 'U'], () => {
 const CHAT_SORT_CYCLE = ['recent', 'unread', 'alpha'];
 
 screen.key(['o', 'O'], () => {
+  if (state.searchOpen) return;
   if (state.screen !== 'chats') return;
   const i = CHAT_SORT_CYCLE.indexOf(state.chatSort);
   state.chatSort = CHAT_SORT_CYCLE[(i + 1) % CHAT_SORT_CYCLE.length];
@@ -1917,10 +2481,18 @@ screen.key(['o', 'O'], () => {
   refreshChats();
 });
 
-screen.key(['C-up'], () => adjustReplyPick(1));
-screen.key(['C-down'], () => adjustReplyPick(-1));
+screen.key(['C-up'], () => {
+  if (state.searchOpen) return;
+  adjustReplyPick(1);
+});
+
+screen.key(['C-down'], () => {
+  if (state.searchOpen) return;
+  adjustReplyPick(-1);
+});
 
 screen.key(['C-d'], () => {
+  if (state.searchOpen) return;
   void downloadHighlightedMedia();
 });
 
@@ -1983,6 +2555,7 @@ waService.on('message', (msg) => {
     state.currentMessages.splice(0, state.currentMessages.length - 200);
   }
   appendMsgListLine(row);
+  if (state.searchOpen) syncSearchResults();
 });
 
 waService.on('message_ack', ({ messageId, chatId, ack }) => {
@@ -2015,6 +2588,7 @@ waService.on('remote_typing', (payload) => {
 });
 
 screen.key(['n'], () => {
+  if (state.searchOpen) return;
   if (state.screen === 'chats') {
     state.page++;
     refreshChats();
@@ -2022,6 +2596,7 @@ screen.key(['n'], () => {
 });
 
 screen.key(['p'], () => {
+  if (state.searchOpen) return;
   if (state.screen === 'chats' && state.page > 1) {
     state.page--;
     refreshChats();
