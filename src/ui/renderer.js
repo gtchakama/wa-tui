@@ -77,6 +77,7 @@ let bootLoaderInterval = null;
 let currentChatPageItems = [];
 let chatPreviewToken = 0;
 let settingsPreviewPaletteId = normalizePaletteId(loadSettings().palette);
+const CHAT_LIST_ITEM_LINES = 2;
 
 /** xterm-style window resize CSI (opt-in: WA_TUI_RESIZE=1). */
 function tryResizeTerminal(rows, cols) {
@@ -734,17 +735,29 @@ function adjustReplyPick(delta) {
 
 function applyChatSort(chats) {
   const out = [...chats];
-  if (state.chatSort === 'unread') {
-    out.sort((a, b) => {
+  const byListIndex = (a, b) => (a.listIndex || 0) - (b.listIndex || 0);
+
+  out.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.pinned && b.pinned) return byListIndex(a, b);
+
+    if (state.chatSort === 'unread') {
       const du = (b.unreadCount || 0) - (a.unreadCount || 0);
       if (du !== 0) return du;
-      return (b.timestamp || 0) - (a.timestamp || 0);
-    });
-  } else if (state.chatSort === 'alpha') {
-    out.sort((a, b) =>
-      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
-    );
-  }
+      const dt = (b.timestamp || 0) - (a.timestamp || 0);
+      if (dt !== 0) return dt;
+      return byListIndex(a, b);
+    }
+
+    if (state.chatSort === 'alpha') {
+      const dn = (a.name || '').localeCompare(b.name || '', undefined, {
+        sensitivity: 'base'
+      });
+      if (dn !== 0) return dn;
+    }
+
+    return byListIndex(a, b);
+  });
   return out;
 }
 
@@ -817,6 +830,10 @@ function init() {
 
   screen.on('resize', () => {
     if (state.screen === 'loading') layoutMainPanel('loading');
+    if (state.screen === 'chats') {
+      showChats(state.chats);
+      return;
+    }
     syncListAndDetailHeights();
     syncSettingsListGeometry();
     syncQrLayout();
@@ -882,6 +899,9 @@ function showChatBrowserColumns(mode = 'browser') {
 
 function formatChatListItems(pageItems) {
   return pageItems.map((c) => {
+    const pin = c.pinned
+      ? ` {${theme.accent}-fg}[pin]{/${theme.accent}-fg}`
+      : '';
     const unread =
       c.unreadCount > 0
         ? ` {${theme.unread}-fg}[${c.unreadCount}]{/${theme.unread}-fg}`
@@ -892,10 +912,16 @@ function formatChatListItems(pageItems) {
     const time = formatTimestamp(c.timestamp);
     const lastMsg = truncate(c.lastMessage || '—', 56);
     const name = String(c.name || '').replace(/\{/g, '(').replace(/\}/g, ')');
+    const displayName = c.unreadCount > 0 ? `{bold}${name}{/bold}` : name;
 
-    return `${name}${unread}${type} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg}\n` +
+    return `${displayName}${pin}${unread}${type} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg}\n` +
       `  {${theme.fgDim}-fg}${lastMsg.replace(/\{/g, '(').replace(/\}/g, ')')}{/${theme.fgDim}-fg}`;
   });
+}
+
+function currentChatPageSize() {
+  const visibleRows = Number(layout.chatList?.height) || state.pageSize * CHAT_LIST_ITEM_LINES;
+  return Math.max(1, Math.floor(visibleRows / CHAT_LIST_ITEM_LINES));
 }
 
 function renderChatPreviewBody(chat, rows, error) {
@@ -948,6 +974,9 @@ function renderChatMeta(chat) {
   const lines = [
     `{bold}type{/bold}`,
     chat.isGroup ? 'group' : 'direct message',
+    '',
+    `{bold}pinned{/bold}`,
+    chat.pinned ? 'yes' : 'no',
     '',
     `{bold}unread{/bold}`,
     String(chat.unreadCount || 0),
@@ -1638,13 +1667,15 @@ function showChats(chats) {
   setPaneActive(layout.chatPreviewPane, false);
   setPaneActive(layout.chatMetaPane, false);
 
-  const result = paginate(chats, state.page, state.pageSize);
+  const pageSize = currentChatPageSize();
+  state.pageSize = pageSize;
+  const result = paginate(chats, state.page, pageSize);
   state.page = result.page;
   currentChatPageItems = result.items;
 
   refreshWidgetStyles();
   layout.chatListMeta.setContent(
-    `filter: ${state.filter}   sort: ${state.chatSort}   page: ${state.page}\n` +
+    `filter: ${state.filter}   sort: ${state.chatSort}   page: ${state.page}/${result.totalPages}\n` +
       `${state.unreadOnly ? 'unread_only on' : 'unread_only off'}   mouse: click or wheel`
   );
   layout.chatList.show();

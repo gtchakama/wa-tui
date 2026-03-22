@@ -335,9 +335,8 @@ class WhatsAppService extends EventEmitter {
 
   async getChats() {
     const chats = await this.client.getChats();
-    const sorted = chats.sort((a, b) => b.timestamp - a.timestamp);
 
-    return sorted.map((chat) => {
+    return chats.map((chat, listIndex) => {
       const title =
         chat.name || chat.formattedTitle || (chat.id && chat.id.user) || 'Unknown';
 
@@ -345,6 +344,8 @@ class WhatsAppService extends EventEmitter {
         id: chat.id._serialized,
         name: title,
         isGroup: chat.isGroup,
+        pinned: Boolean(chat.pinned),
+        listIndex,
         unreadCount: chat.unreadCount || 0,
         timestamp: chat.timestamp || 0,
         lastMessage: chat.lastMessage ? chat.lastMessage.body : '',
