@@ -693,21 +693,24 @@ function createFooter() {
   updateFooter();
 }
 
+const _isMac = process.platform === 'darwin';
+const _mod = _isMac ? 'Cmd' : 'Ctrl';
+
 function updateFooter() {
   if (!layout.footer) return;
   let line;
   if (state.searchOpen) {
     line =
-      ' [Enter]: open · [↑↓]: move · [Esc]: close · [Ctrl+K]: toggle finder';
+      ` [Enter]: open · [↑↓]: move · [Esc]: close · [${_mod}+K]: toggle finder`;
   } else if (state.screen === 'settings') {
     line =
       ' [Enter]: apply palette · [Esc]/[F2]: back · Saved: ~/.wa-tui/settings.json · [Q]: Quit';
   } else if (state.screen === 'chatDetail') {
     line =
-      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+K]: Search · [Ctrl+↑↓]: Quote · [Ctrl+D]: DL · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit';
+      ` [Esc]: clr quote / back · [B]: Back · [${_mod}+K]: Search · [Ctrl+↑↓]: Quote · [Ctrl+D]: DL · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit`;
   } else if (state.screen === 'chats') {
     line =
-      ' [Q]: Quit · [Ctrl+K]: Search · [F2]: Colours · [Ctrl+L]: Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort';
+      ` [Q]: Quit · [${_mod}+K]: Search · [F2]: Colours · [Ctrl+L]: Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort`;
   } else {
     line = ' [Q]: Quit · [Ctrl+L]: Logout';
   }
@@ -1357,6 +1360,7 @@ function renderChatDetailMeta() {
     `{bold}actions{/bold}`,
     'Esc clear quote / back',
     'B back to chats',
+    `${_mod}+K search`,
     'Ctrl+up/down move quote',
     'Ctrl+D download media',
     '',
@@ -2507,7 +2511,7 @@ screen.key(['C-l'], () => {
   void performLogout();
 });
 
-screen.key(['C-k'], () => {
+screen.key(['C-k', 'M-k'], () => {
   if (state.screen !== 'chats' && state.screen !== 'chatDetail' && !state.searchOpen) return;
   if (state.searchOpen) {
     closeSearch();
