@@ -200,8 +200,9 @@ function stopBootLoader() {
 }
 
 const BOOT_PHASES = {
-  init:          { step: 0, label: 'Initializing',                  detail: 'Setting up wa-tui' },
-  launching:     { step: 1, label: 'Launching browser',             detail: 'Starting headless Chrome' },
+  init:             { step: 0, label: 'Initializing',               detail: 'Setting up wa-tui' },
+  browser_download: { step: 0, label: 'Setting up WhatsApp',        detail: 'Downloading browser' },
+  launching:        { step: 1, label: 'Launching browser',          detail: 'Starting headless Chrome' },
   waiting_auth:  { step: 2, label: 'Connecting',                    detail: 'Opening WhatsApp Web' },
   qr:            { step: 3, label: 'Waiting for QR scan',           detail: 'Scan QR code with your phone' },
   authenticated: { step: 4, label: 'Authenticated',                 detail: 'Session established' },
@@ -256,11 +257,14 @@ function bootLoaderFrame(n) {
       : `Disconnected: ${state.error || 'connection lost'}`;
     statusLine = `    {#${E}-fg}✖ ${errMsg}{/}`;
   } else {
-    // Sync percent from WhatsApp loading screen
-    const syncSuffix = state.loadingPhase === 'syncing' && state._syncPercent != null
-      ? ` (${state._syncPercent}%)`
-      : '';
-    statusLine = `    {#${A}-fg}${s}{/} {#${L}-fg}${phase.label}${syncSuffix}{/}  {#${D}-fg}${phase.detail}{/}`;
+    // Percent suffix for download / sync phases
+    let pctSuffix = '';
+    if (state.loadingPhase === 'browser_download' && state._browserDlPercent != null) {
+      pctSuffix = ` (${state._browserDlPercent}%)`;
+    } else if (state.loadingPhase === 'syncing' && state._syncPercent != null) {
+      pctSuffix = ` (${state._syncPercent}%)`;
+    }
+    statusLine = `    {#${A}-fg}${s}{/} {#${L}-fg}${phase.label}${pctSuffix}{/}  {#${D}-fg}${phase.detail}{/}`;
   }
 
   // Step indicators
@@ -285,7 +289,10 @@ function bootLoaderFrame(n) {
 
 function updateBootPhase(ev) {
   if (state.screen !== 'loading') return;
-  if (ev.phase === 'syncing') {
+  if (ev.phase === 'browser_download') {
+    state.loadingPhase = 'browser_download';
+    state._browserDlPercent = ev.percent != null ? ev.percent : state._browserDlPercent;
+  } else if (ev.phase === 'syncing') {
     state.loadingPhase = 'syncing';
     state._syncPercent = ev.percent != null ? ev.percent : state._syncPercent;
   } else if (ev.phase === 'auth_failure') {
