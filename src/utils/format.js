@@ -34,6 +34,18 @@ function chatIdsMatch(a, b) {
 }
 
 /** Readable fallback when pushname is missing (e.g. +263… instead of raw JID). */
+/**
+ * Sanitize text for blessed rendering.
+ * Escapes blessed tag syntax and strips invisible zero-width characters
+ * that cause rendering artifacts, while preserving visible emoji.
+ */
+function sanitizeForBlessed(text) {
+  if (!text) return text;
+  return String(text)
+    .replace(/\{/g, '(')
+    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD]/g, '');
+}
+
 function formatPeerLabel(jidOrName) {
   if (jidOrName == null || jidOrName === '') return '';
   const s = String(jidOrName);
@@ -50,5 +62,6 @@ module.exports = {
   formatTimestamp,
   truncate,
   chatIdsMatch,
-  formatPeerLabel
+  formatPeerLabel,
+  sanitizeForBlessed
 };

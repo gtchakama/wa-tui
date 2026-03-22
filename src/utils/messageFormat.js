@@ -1,5 +1,5 @@
 const { MessageTypes } = require('whatsapp-web.js');
-const { truncate } = require('./format');
+const { truncate, sanitizeForBlessed } = require('./format');
 
 function mediaBracketLabel(type, hasMedia) {
   if (!hasMedia) return null;
@@ -43,7 +43,7 @@ function augmentDisplayPlain(row) {
   if (row.localPath) {
     out += ` @ ${truncate(row.localPath, 56)}`;
   }
-  return out;
+  return sanitizeForBlessed(out);
 }
 
 module.exports = {

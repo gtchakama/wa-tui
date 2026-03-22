@@ -1,9 +1,33 @@
 const blessed = require('neo-blessed');
 const qrcode = require('qrcode-terminal');
 const { MessageAck } = require('whatsapp-web.js');
+
+// Monkey-patch blessed's charWidth to handle emoji as double-wide.
+// Without this, blessed thinks emoji are 1-cell wide but terminals render
+// them as 2 cells, causing scattered/garbled text rendering.
+const _origCharWidth = blessed.unicode.charWidth;
+blessed.unicode.charWidth = function (str, i) {
+  const point = typeof str !== 'number'
+    ? blessed.unicode.codePointAt(str, i || 0)
+    : str;
+  // Emoji & symbol ranges that terminals render as 2 cells wide
+  if ((point >= 0x1F300 && point <= 0x1FAFF)   // Misc Symbols, Emoticons, etc.
+    || (point >= 0x2600 && point <= 0x27BF)     // Misc Symbols, Dingbats
+    || (point >= 0x2300 && point <= 0x23FF)     // Misc Technical
+    || (point >= 0x2B05 && point <= 0x2B55)     // Arrows, geometric
+    || (point >= 0xFE00 && point <= 0xFE0F)     // Variation selectors (invisible, width 0)
+    || point === 0x200D) {                       // ZWJ (invisible, width 0)
+    // Variation selectors and ZWJ are zero-width joiners
+    if ((point >= 0xFE00 && point <= 0xFE0F) || point === 0x200D) return 0;
+    return 2;
+  }
+  // Regional indicator symbols (flags) — each pair = 1 flag glyph = 2 cells
+  if (point >= 0x1F1E6 && point <= 0x1F1FF) return 1; // each half = 1, pair = 2 cells
+  return _origCharWidth(str, i);
+};
 const state = require('./state');
 const waService = require('../whatsapp/service');
-const { formatTimestamp, truncate, chatIdsMatch } = require('../utils/format');
+const { formatTimestamp, truncate, chatIdsMatch, sanitizeForBlessed } = require('../utils/format');
 const { augmentDisplayPlain } = require('../utils/messageFormat');
 const { paginate } = require('../utils/pager');
 const { playIncomingMessageSound } = require('../utils/notifySound');
@@ -147,9 +171,9 @@ function resizePaneInner(pane) {
 }
 
 function safeTagText(value) {
-  return String(value == null ? '' : value)
-    .replace(/\{/g, '(')
-    .replace(/\}/g, ')');
+  return sanitizeForBlessed(
+    String(value == null ? '' : value).replace(/\}/g, ')')
+  );
 }
 
 function layoutMainPanel(phase) {
@@ -434,9 +458,9 @@ function appendMsgListLine(payload) {
   const nameColor = fromMe ? theme.selfMsg : theme.peerMsg;
   const name = fromMe
     ? `{bold}{${nameColor}-fg}You{/${nameColor}-fg}{/bold}`
-    : `{bold}{${nameColor}-fg}${author}{/${nameColor}-fg}{/bold}`;
+    : `{bold}{${nameColor}-fg}${sanitizeForBlessed(author)}{/${nameColor}-fg}{/bold}`;
   const time = formatTimestamp(timestamp);
-  const text = augmentDisplayPlain(row).replace(/\{/g, '(');
+  const text = augmentDisplayPlain(row);
   const ack = fromMe ? ackSuffix(payload.ack) : '';
   layout.msgList.add(`[${time}] ${name}: ${text}${ack}`);
   try {
@@ -800,7 +824,7 @@ function updateReplyBarContent() {
   const A = theme.accent.slice(1);
   const D = theme.fgDim.slice(1);
   layout.replyBar.setContent(
-    `{#${A}-fg}↪{/} ${state.replyTo.author}: ${sn.replace(/\{/g, '(')}  {#${D}-fg}Esc clear · Ctrl+↑↓{/}`
+    `{#${A}-fg}↪{/} ${sanitizeForBlessed(state.replyTo.author)}: ${sanitizeForBlessed(sn)}  {#${D}-fg}Esc clear · Ctrl+↑↓{/}`
   );
 }
 
@@ -821,7 +845,7 @@ function redrawChatMessages() {
       const nc = (m.fromMe ? theme.selfMsg : theme.peerMsg).slice(1);
       const name = m.fromMe
         ? `{bold}{#${nc}-fg}You{/#${nc}-fg}{/bold}`
-        : `{bold}{#${nc}-fg}${m.author}{/#${nc}-fg}{/bold}`;
+        : `{bold}{#${nc}-fg}${sanitizeForBlessed(m.author)}{/#${nc}-fg}{/bold}`;
       const time = formatTimestamp(m.timestamp);
       const mark =
         state.replyTo && m.id === state.replyTo.id
@@ -829,7 +853,7 @@ function redrawChatMessages() {
           : state.searchHitMessageId && m.id === state.searchHitMessageId
             ? `{#${A}-fg}◆ {/#${A}-fg}`
           : '';
-      const plain = augmentDisplayPlain(m).replace(/\{/g, '(');
+      const plain = augmentDisplayPlain(m);
       const ack = m.fromMe ? ackSuffix(m.ack) : '';
       return `[${time}] ${mark}${name}: ${plain}${ack}`;
     })
@@ -1068,11 +1092,11 @@ function formatChatListItems(pageItems) {
       : ` {${theme.fgDim}-fg}[dm]{/${theme.fgDim}-fg}`;
     const time = formatTimestamp(c.timestamp);
     const lastMsg = truncate(c.lastMessage || '—', 56);
-    const name = String(c.name || '').replace(/\{/g, '(').replace(/\}/g, ')');
+    const name = sanitizeForBlessed(String(c.name || '').replace(/\}/g, ')'));
     const displayName = c.unreadCount > 0 ? `{bold}${name}{/bold}` : name;
 
     return `${displayName}${pin}${unread}${type} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg}\n` +
-      `  {${theme.fgDim}-fg}${lastMsg.replace(/\{/g, '(').replace(/\}/g, ')')}{/${theme.fgDim}-fg}`;
+      `  {${theme.fgDim}-fg}${sanitizeForBlessed(lastMsg.replace(/\}/g, ')'))}{/${theme.fgDim}-fg}`;
   });
 }
 
@@ -1111,8 +1135,8 @@ function renderChatPreviewBody(chat, rows, error) {
   const content = rows
     .map((m) => {
       const nameColor = (m.fromMe ? theme.selfMsg : theme.peerMsg).slice(1);
-      const who = m.fromMe ? 'You' : m.author;
-      const body = augmentDisplayPlain(m).replace(/\{/g, '(');
+      const who = m.fromMe ? 'You' : sanitizeForBlessed(m.author);
+      const body = augmentDisplayPlain(m);
       return `[${formatTimestamp(m.timestamp)}] {bold}{#${nameColor}-fg}${who}{/#${nameColor}-fg}{/bold}\n` +
         `  ${body}`;
     })
@@ -1321,7 +1345,7 @@ function renderChatDetailMeta() {
       : 'none',
     '',
     `{bold}your messages{/bold}`,
-    '✓ sent · ✓✓ delivered · accent ✓✓ read',
+    `✓ sent · ✓✓ delivered · {${theme.accent}-fg}✓✓{/${theme.accent}-fg} read`,
     '',
     `{bold}peer activity{/bold}`,
     state.peerTypingState === 'recording'
@@ -2289,7 +2313,7 @@ function showChats(chats) {
     const chat = currentChatPageItems[index];
     if (!chat) return;
     layout.chatPreviewMeta.setContent(
-      `${chat.name.replace(/\{/g, '(')}\n` +
+      `${sanitizeForBlessed(chat.name)}\n` +
         `${chat.isGroup ? 'group' : 'direct'} · ${formatTimestamp(chat.timestamp)}`
     );
     renderChatMeta(chat);
@@ -2309,7 +2333,7 @@ function showChats(chats) {
     layout.chatList.select(selectedIndex);
     const chat = currentChatPageItems[selectedIndex];
     layout.chatPreviewMeta.setContent(
-      `${chat.name.replace(/\{/g, '(')}\n` +
+      `${sanitizeForBlessed(chat.name)}\n` +
         `${chat.isGroup ? 'group' : 'direct'} · ${formatTimestamp(chat.timestamp)}`
     );
     renderChatMeta(chat);
