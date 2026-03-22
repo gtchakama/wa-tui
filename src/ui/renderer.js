@@ -693,26 +693,23 @@ function createFooter() {
   updateFooter();
 }
 
-// Terminal apps on macOS use Ctrl for shortcuts (Cmd is intercepted by the terminal itself)
-const _mod = 'Ctrl';
-
 function updateFooter() {
   if (!layout.footer) return;
   let line;
   if (state.searchOpen) {
     line =
-      ` [Enter]: open · [↑↓]: move · [Esc]: close · [${_mod}+K]: toggle finder`;
+      ' [Enter]: open · [↑↓]: move · [Esc]: close · [Ctrl+K]: toggle finder';
   } else if (state.screen === 'settings') {
     line =
       ' [Enter]: apply palette · [Esc]/[F2]: back · Saved: ~/.wa-tui/settings.json · [Q]: Quit';
   } else if (state.screen === 'chatDetail') {
     line =
-      ` [Esc]: clr quote / back · [B]: Back · [${_mod}+K]: Search · [${_mod}+↑↓]: Quote · [${_mod}+D]: DL · [F2]: Colours · [${_mod}+L]: Logout · [Q]: Quit`;
+      ' [Esc]: clr quote / back · [B]: Back · [Ctrl+K]: Search · [Ctrl+↑↓]: Quote · [Ctrl+D]: DL · [F2]: Colours · [Ctrl+L]: Logout · [Q]: Quit';
   } else if (state.screen === 'chats') {
     line =
-      ` [Q]: Quit · [${_mod}+K] or [/]: Search · [F2]: Colours · [${_mod}+L]: Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort`;
+      ' [Q]: Quit · [Ctrl+K] or [/]: Search · [F2]: Colours · [Ctrl+L]: Logout · [R]efresh · [U]nread · [N]/[P] · [1-3] filter · [O] sort';
   } else {
-    line = ` [Q]: Quit · [${_mod}+L]: Logout`;
+    line = ' [Q]: Quit · [Ctrl+L]: Logout';
   }
   layout.footer.setContent(line);
 }
@@ -769,6 +766,7 @@ function hidePrimaryViews() {
   layout.chatBrowser?.hide();
   layout.chatDetail?.hide();
   layout.searchRoot?.hide();
+  layout.searchBackdrop?.hide();
   layout.settingsRoot?.hide();
   layout.qrRoot?.hide();
 }
@@ -1008,6 +1006,8 @@ function init() {
       if (state.screen === 'chats') showChats(state.chats);
       else syncListAndDetailHeights();
       syncSearchLayout();
+      layout.searchBackdrop?.show();
+      layout.searchBackdrop?.setFront?.();
       layout.searchRoot?.show();
       layout.searchRoot?.setFront?.();
       updateSearchMeta();
@@ -1804,11 +1804,11 @@ function closeSettings() {
 function searchGeometry() {
   const totalWidth = screen.width || 100;
   const totalHeight = innerRows();
-  const width = Math.max(56, Math.min(totalWidth - 6, Math.floor(totalWidth * 0.76)));
-  const height = Math.max(12, Math.min(totalHeight - 2, Math.floor(totalHeight * 0.72)));
+  const width = Math.max(50, Math.min(72, Math.floor(totalWidth * 0.55)));
+  const height = Math.max(14, Math.min(totalHeight - 4, Math.floor(totalHeight * 0.65)));
   return {
-    top: 1 + Math.max(0, Math.floor((totalHeight - height) / 2)),
-    left: Math.max(0, Math.floor((totalWidth - width) / 2)),
+    top: 1 + Math.max(1, Math.floor((totalHeight - height) / 2)),
+    left: Math.max(2, Math.floor((totalWidth - width) / 2)),
     width,
     height
   };
@@ -1821,27 +1821,36 @@ function syncSearchLayout() {
   layout.searchRoot.left = left;
   layout.searchRoot.width = width;
   layout.searchRoot.height = height;
-  resizePaneInner(layout.searchRoot);
 
-  layout.searchPrompt.top = 0;
-  layout.searchPrompt.left = 0;
-  layout.searchPrompt.width = layout.searchRoot._inner.width;
+  // Inner content area: border takes 1 col each side, plus 1 col padding each side
+  const contentW = width - 4;
+  const contentLeft = 2; // 1 border + 1 padding
+
+  layout.searchPrompt.top = 1;
+  layout.searchPrompt.left = contentLeft;
+  layout.searchPrompt.width = 2;
   layout.searchPrompt.height = 1;
 
   layout.searchInput.top = 1;
-  layout.searchInput.left = 0;
-  layout.searchInput.width = layout.searchRoot._inner.width;
+  layout.searchInput.left = contentLeft + 2;
+  layout.searchInput.width = contentW - 2;
   layout.searchInput.height = 1;
 
-  layout.searchMeta.top = 2;
-  layout.searchMeta.left = 0;
-  layout.searchMeta.width = layout.searchRoot._inner.width;
-  layout.searchMeta.height = 1;
+  layout.searchSep.top = 2;
+  layout.searchSep.left = contentLeft;
+  layout.searchSep.width = contentW;
+  layout.searchSep.height = 1;
+  layout.searchSep.setContent(`{${theme.fgDim}-fg}${'─'.repeat(Math.max(1, contentW))}{/${theme.fgDim}-fg}`);
 
   layout.searchResults.top = 3;
-  layout.searchResults.left = 0;
-  layout.searchResults.width = layout.searchRoot._inner.width;
-  layout.searchResults.height = Math.max(4, layout.searchRoot._inner.height - 3);
+  layout.searchResults.left = contentLeft;
+  layout.searchResults.width = contentW;
+  layout.searchResults.height = Math.max(4, height - 5);
+
+  layout.searchMeta.top = height - 2;
+  layout.searchMeta.left = contentLeft;
+  layout.searchMeta.width = contentW;
+  layout.searchMeta.height = 1;
 }
 
 function searchQueryParts(query) {
@@ -1852,40 +1861,19 @@ function searchQueryParts(query) {
     .filter(Boolean);
 }
 
-function fuzzySegmentScore(segment, text) {
-  if (!segment) return 0;
-  const haystack = String(text || '').toLowerCase();
-  const exactIndex = haystack.indexOf(segment);
-  let score = exactIndex >= 0 ? 40 - Math.min(20, exactIndex) : 0;
-  let lastIndex = -1;
-  let streak = 0;
-
-  for (const ch of segment) {
-    const idx = haystack.indexOf(ch, lastIndex + 1);
-    if (idx === -1) return -1;
-    if (idx === lastIndex + 1) {
-      streak += 1;
-      score += 6 + Math.min(4, streak);
-    } else {
-      streak = 0;
-      score += Math.max(0, 4 - Math.min(3, idx - lastIndex - 1));
-    }
-    if (idx === 0 || ' -_./:@'.includes(haystack[idx - 1] || '')) score += 5;
-    lastIndex = idx;
-  }
-
-  score += Math.max(0, 12 - Math.max(0, haystack.length - segment.length));
-  return score;
-}
-
 function fuzzyMatchScore(query, text) {
   const parts = searchQueryParts(query);
   if (!parts.length) return 0;
+  const haystack = String(text || '').toLowerCase();
   let score = 0;
   for (const part of parts) {
-    const partScore = fuzzySegmentScore(part, text);
-    if (partScore < 0) return -1;
-    score += partScore;
+    const idx = haystack.indexOf(part);
+    if (idx === -1) return -1; // all parts must be substrings
+    // Prefer matches at the start or at word boundaries
+    if (idx === 0) score += 20;
+    else if (' -_./:@'.includes(haystack[idx - 1] || '')) score += 10;
+    score += Math.max(0, 10 - idx); // earlier matches score higher
+    score += part.length; // longer matching parts score higher
   }
   return score;
 }
@@ -1961,30 +1949,30 @@ function buildSearchEntries(query) {
 
 function formatSearchEntry(entry) {
   if (entry.kind === 'section') {
-    return `{${theme.fgDim}-fg}${entry.label.toUpperCase()}{/${theme.fgDim}-fg}`;
+    return `{${theme.fgDim}-fg}── ${entry.label} ──{/${theme.fgDim}-fg}`;
   }
   if (entry.kind === 'empty') {
-    return `{${theme.fgDim}-fg}${safeTagText(entry.label)}{/${theme.fgDim}-fg}`;
+    return `  {${theme.fgDim}-fg}${safeTagText(entry.label)}{/${theme.fgDim}-fg}`;
   }
   if (entry.kind === 'chat') {
     const { chat } = entry;
     const name = safeTagText(chat.name || 'Unknown');
-    const pin = chat.pinned
-      ? ` {${theme.accent}-fg}[pin]{/${theme.accent}-fg}`
-      : '';
+    const type = chat.isGroup
+      ? `{${theme.fgDim}-fg}grp{/${theme.fgDim}-fg}`
+      : `{${theme.fgDim}-fg}dm{/${theme.fgDim}-fg}`;
     const unread =
       chat.unreadCount > 0
-        ? ` {${theme.unread}-fg}[${chat.unreadCount}]{/${theme.unread}-fg}`
+        ? ` {${theme.unread}-fg}${chat.unreadCount}{/${theme.unread}-fg}`
         : '';
-    const time = formatTimestamp(chat.timestamp || 0);
-    const preview = truncate(safeTagText(chat.lastMessage || '—'), 46);
-    return `${name}${pin}${unread} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg} · ${preview}`;
+    const time = `{${theme.fgDim}-fg}${formatTimestamp(chat.timestamp || 0)}{/${theme.fgDim}-fg}`;
+    return `  ${name} ${type}${unread} ${time}`;
   }
   const { message } = entry;
-  const author = safeTagText(message.fromMe ? 'You' : message.author || 'Unknown');
-  const time = formatTimestamp(message.timestamp || 0);
-  const preview = truncate(safeTagText(augmentDisplayPlain(message)), 58);
-  return `${author} {${theme.fgDim}-fg}${time}{/${theme.fgDim}-fg} · ${preview}`;
+  const nc = (message.fromMe ? theme.selfMsg : theme.peerMsg).slice(1);
+  const author = `{#${nc}-fg}${safeTagText(message.fromMe ? 'You' : message.author || 'Unknown')}{/#${nc}-fg}`;
+  const time = `{${theme.fgDim}-fg}${formatTimestamp(message.timestamp || 0)}{/${theme.fgDim}-fg}`;
+  const preview = truncate(safeTagText(augmentDisplayPlain(message)), 42);
+  return `  ${author} ${time} ${preview}`;
 }
 
 function findSearchSelectableIndex(start = 0, step = 1) {
@@ -2005,24 +1993,21 @@ function updateSearchMeta() {
   const messageCount = currentSearchEntries.filter((entry) => entry.kind === 'message').length;
   const selected = currentSearchEntries[layout.searchResults?.selected || 0];
 
+  const counts = [];
+  if (chatCount) counts.push(`${chatCount} chats`);
+  if (messageCount) counts.push(`${messageCount} msgs`);
+  const countStr = counts.length ? counts.join(' · ') : 'no results';
+
+  let hint = '';
   if (selected?.kind === 'chat') {
-    layout.searchMeta.setContent(
-      `${selected.chat.isGroup ? 'group' : 'direct'} · ${formatTimestamp(selected.chat.timestamp || 0)} · Enter opens chat`
-    );
-    return;
-  }
-  if (selected?.kind === 'message') {
-    layout.searchMeta.setContent(
-      `current thread · ${formatTimestamp(selected.message.timestamp || 0)} · Enter highlights match`
-    );
-    return;
+    hint = `Enter: open chat`;
+  } else if (selected?.kind === 'message') {
+    hint = `Enter: jump to message`;
   }
 
-  const scope =
-    state.screen === 'chatDetail'
-      ? `${chatCount} chats · ${messageCount} messages`
-      : `${chatCount} chats`;
-  layout.searchMeta.setContent(`${scope} · Enter opens selected result`);
+  layout.searchMeta.setContent(
+    `{${theme.fgDim}-fg}${countStr}${hint ? '  ·  ' + hint : ''}  ·  Esc: close{/${theme.fgDim}-fg}`
+  );
 }
 
 function syncSearchResults() {
@@ -2094,24 +2079,53 @@ async function activateSearchSelection() {
 function ensureSearchLayout() {
   if (layout.searchRoot) return;
 
-  layout.searchRoot = makePane(screen, ' find ', { transparent: false });
-  layout.searchRoot.hide();
+  // Semi-transparent backdrop to dim the underlying UI
+  layout.searchBackdrop = blessed.box({
+    parent: screen,
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    transparent: true,
+    ch: ' ',
+    style: {}
+  });
+  layout.searchBackdrop.hide();
 
-  layout.searchPrompt = blessed.box({
-    parent: layout.searchRoot._inner,
+  layout.searchRoot = blessed.box({
+    parent: screen,
     top: 0,
     left: 0,
     width: 10,
+    height: 10,
+    border: { type: 'line' },
+    label: ` {bold}Search{/bold} `,
+    tags: true,
+    transparent: false,
+    style: {
+      fg: theme.fg,
+      border: { fg: theme.accent },
+      label: { fg: theme.accent }
+    }
+  });
+  layout.searchRoot.hide();
+
+  layout.searchPrompt = blessed.box({
+    parent: layout.searchRoot,
+    top: 1,
+    left: 2,
+    width: 10,
     height: 1,
     tags: true,
+    content: `{${theme.accent}-fg}>{/${theme.accent}-fg} `,
     transparent: false,
     style: { fg: theme.fgDim }
   });
 
   layout.searchInput = blessed.textbox({
-    parent: layout.searchRoot._inner,
+    parent: layout.searchRoot,
     top: 1,
-    left: 0,
+    left: 4,
     width: 10,
     height: 1,
     keys: true,
@@ -2121,10 +2135,11 @@ function ensureSearchLayout() {
     style: { fg: theme.fg }
   });
 
-  layout.searchMeta = blessed.box({
-    parent: layout.searchRoot._inner,
+  // Separator line below input
+  layout.searchSep = blessed.box({
+    parent: layout.searchRoot,
     top: 2,
-    left: 0,
+    left: 1,
     width: 10,
     height: 1,
     tags: true,
@@ -2133,9 +2148,9 @@ function ensureSearchLayout() {
   });
 
   layout.searchResults = blessed.list({
-    parent: layout.searchRoot._inner,
+    parent: layout.searchRoot,
     top: 3,
-    left: 0,
+    left: 1,
     width: 10,
     height: 10,
     keys: true,
@@ -2158,9 +2173,16 @@ function ensureSearchLayout() {
     }
   });
 
-  layout.searchPrompt.setContent(
-    `{bold}Search{/bold} chats first · current-thread messages below`
-  );
+  layout.searchMeta = blessed.box({
+    parent: layout.searchRoot,
+    top: 10,
+    left: 1,
+    width: 10,
+    height: 1,
+    tags: true,
+    transparent: false,
+    style: { fg: theme.fgDim }
+  });
 
   layout.searchInput.on('keypress', (ch, key = {}) => {
     if (!state.searchOpen) return;
@@ -2211,7 +2233,8 @@ function openSearch() {
   ensureSearchLayout();
   syncSearchLayout();
   refreshWidgetStyles();
-  setPaneActive(layout.searchRoot, true);
+  layout.searchBackdrop.show();
+  layout.searchBackdrop.setFront?.();
   layout.searchRoot.show();
   layout.searchRoot.setFront?.();
   layout.searchInput.setValue('');
@@ -2230,6 +2253,7 @@ function closeSearch() {
   currentSearchEntries = [];
   layout.searchInput?.clearValue();
   layout.searchRoot?.hide();
+  layout.searchBackdrop?.hide();
 
   if (back === 'chatDetail') {
     layout.input?.focus();
@@ -2463,6 +2487,8 @@ async function refreshChats() {
 
   showChats(chats);
   if (state.searchOpen) {
+    layout.searchBackdrop?.show();
+    layout.searchBackdrop?.setFront?.();
     layout.searchRoot?.show();
     layout.searchRoot?.setFront?.();
     syncSearchResults();
