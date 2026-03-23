@@ -14,7 +14,7 @@
   "scripts": {
     "start": "node src/index.js",
     "start:resize": "WA_TUI_RESIZE=1 node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "repository": {
     "type": "git",

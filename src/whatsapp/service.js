@@ -525,4 +525,15 @@ class WhatsAppService extends EventEmitter {
   }
 }
 
-module.exports = new WhatsAppService();
+const service = new WhatsAppService();
+
+service.__private = {
+  resolveIncomingAuthor,
+  shouldEmitUserMessage,
+  quotedSnippetFrom,
+  chatIdFromClientMessage,
+  ackFromMessage,
+  rowFromClientMessage
+};
+
+module.exports = service;
