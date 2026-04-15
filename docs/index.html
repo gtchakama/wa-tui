@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>wa-tui — WhatsApp in your terminal</title>
+<meta name="description" content="A fast, keyboard-driven terminal UI for WhatsApp Web. Built with neo-blessed and whatsapp-web.js. Open source." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23128c7e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='white' font-family='monospace' font-weight='700' font-size='14'%3E%7E%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-2: #f7faf8;
+    --panel: #ffffff;
+    --panel-alt: #f3f7f4;
+    --ink: #0a1f17;
+    --ink-2: #1f3a2e;
+    --muted: #5b7668;
+    --green: #128c7e;
+    --green-strong: #075e54;
+    --green-soft: #d7f3e3;
+    --accent: #0a6f5f;
+    --border: #e3ece6;
+    --border-strong: #cfded4;
+    --shadow-sm: 0 1px 2px rgba(10, 31, 23, 0.04), 0 1px 1px rgba(10, 31, 23, 0.03);
+    --shadow-md: 0 10px 30px rgba(10, 31, 23, 0.06), 0 2px 6px rgba(10, 31, 23, 0.04);
+    --shadow-lg: 0 30px 60px rgba(10, 31, 23, 0.08), 0 8px 20px rgba(10, 31, 23, 0.05);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(900px 480px at 85% -5%, rgba(18, 140, 126, 0.08), transparent 60%),
+      radial-gradient(700px 400px at -5% 15%, rgba(37, 211, 102, 0.07), transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    line-height: 1.55;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: saturate(1.3) blur(14px);
+    background: rgba(255, 255, 255, 0.82);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1120px; margin: 0 auto; padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #25d366;
+    box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.18);
+  }
+  .nav-links { display: flex; gap: 24px; font-size: 14px; color: var(--muted); }
+  .nav-links a { color: var(--muted); font-weight: 500; }
+  .nav-links a:hover { color: var(--ink); text-decoration: none; }
+  .nav-cta {
+    padding: 9px 16px; border-radius: 8px;
+    background: var(--ink); color: #ffffff; font-weight: 600; font-size: 14px;
+    transition: background 0.15s ease;
+  }
+  .nav-cta:hover { text-decoration: none; background: var(--green-strong); }
+
+  .hero { max-width: 1120px; margin: 0 auto; padding: 72px 24px 40px; }
+  .hero-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 56px; align-items: center; }
+  @media (max-width: 880px) { .hero-grid { grid-template-columns: 1fr; gap: 40px; } }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+    font-size: 12px; color: var(--ink-2); font-weight: 500;
+    background: var(--green-soft);
+  }
+  .eyebrow .pulse {
+    width: 6px; height: 6px; border-radius: 50%; background: #25d366;
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.5); }
+    70% { box-shadow: 0 0 0 10px rgba(37, 211, 102, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); }
+  }
+
+  h1.hero-title {
+    font-size: clamp(42px, 6.2vw, 72px);
+    line-height: 1.02; letter-spacing: -0.03em;
+    margin: 22px 0 20px; font-weight: 800;
+    color: var(--ink);
+  }
+  .hero-title .grad {
+    background: linear-gradient(120deg, #128c7e 0%, #075e54 60%, #0a1f17 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero-sub { font-size: 19px; color: var(--muted); max-width: 540px; margin: 0 0 30px; }
+  .hero-sub .mono { color: var(--ink-2); background: var(--panel-alt); padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 13px 20px; border-radius: 10px; font-weight: 600; font-size: 15px;
+    border: 1px solid transparent; cursor: pointer;
+    transition: transform 0.15s ease, background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .btn:hover { transform: translateY(-1px); text-decoration: none; }
+  .btn-primary { background: var(--ink); color: #ffffff; box-shadow: var(--shadow-sm); }
+  .btn-primary:hover { background: var(--green-strong); box-shadow: var(--shadow-md); }
+  .btn-ghost { background: #ffffff; color: var(--ink); border-color: var(--border-strong); }
+  .btn-ghost:hover { background: var(--panel-alt); border-color: var(--green); color: var(--green-strong); }
+
+  .install {
+    margin-top: 28px; padding: 4px 4px 4px 18px;
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    max-width: 540px; box-shadow: var(--shadow-sm);
+  }
+  .install code { color: var(--ink); font-size: 14px; font-weight: 500; }
+  .install .prompt { color: var(--green); margin-right: 8px; user-select: none; }
+  .copy-btn {
+    font-size: 12px; color: var(--muted); background: var(--panel-alt);
+    border: 1px solid var(--border); padding: 9px 14px; border-radius: 8px; cursor: pointer;
+    font-weight: 500;
+  }
+  .copy-btn:hover { color: var(--ink); background: var(--green-soft); border-color: var(--green); }
+
+  /* Terminal mockup — dark for authenticity */
+  .terminal {
+    background: #0e1a15;
+    border: 1px solid #1a2e25;
+    border-radius: 14px;
+    box-shadow: var(--shadow-lg), 0 0 0 1px rgba(18, 140, 126, 0.08) inset;
+    overflow: hidden;
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; background: #0a1511; border-bottom: 1px solid #1a2e25;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .term-title { margin-left: 8px; color: #7fae95; font-size: 12px; }
+  .term-body { padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; min-height: 340px; color: #e8fff4; }
+  .term-layout { display: grid; grid-template-columns: 170px 1fr; gap: 12px; height: 300px; }
+  .chat-list, .chat-view {
+    background: rgba(255, 255, 255, 0.02); border: 1px solid #1a2e25;
+    border-radius: 8px; padding: 10px; overflow: hidden;
+  }
+  .pane-title { color: #7fae95; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .chat-row { padding: 6px 8px; border-radius: 6px; color: #e8fff4; font-size: 12px; display: flex; justify-content: space-between; }
+  .chat-row .badge { background: #25d366; color: #041910; font-weight: 700; border-radius: 10px; padding: 0 6px; font-size: 10px; }
+  .chat-row.active { background: rgba(37, 211, 102, 0.16); color: #a7f3d0; }
+  .msg { margin: 6px 0; font-size: 12px; }
+  .msg.me { color: #a7f3d0; text-align: right; }
+  .msg .name { color: #7fae95; font-size: 11px; margin-right: 6px; }
+  .typing-line { color: #7fae95; font-size: 12px; margin-top: 8px; }
+  .caret { display: inline-block; width: 7px; height: 13px; background: #25d366; vertical-align: text-bottom; margin-left: 2px; animation: blink 1s steps(2, end) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Features */
+  .section { max-width: 1120px; margin: 0 auto; padding: 64px 24px; }
+  .section-head { text-align: center; margin-bottom: 40px; }
+  .section-head h2 { font-size: clamp(28px, 4vw, 42px); margin: 0 0 12px; letter-spacing: -0.02em; color: var(--ink); font-weight: 800; }
+  .section-head p { color: var(--muted); margin: 0; font-size: 17px; }
+  .section-head .mono { color: var(--ink-2); background: var(--panel-alt); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 880px) { .features { grid-template-columns: 1fr; } }
+  .feature {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px;
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    box-shadow: var(--shadow-sm);
+  }
+  .feature:hover { border-color: var(--green); transform: translateY(-3px); box-shadow: var(--shadow-md); }
+  .feature .icon {
+    width: 42px; height: 42px; border-radius: 10px;
+    background: var(--green-soft); color: var(--green-strong);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+    font-size: 20px;
+  }
+  .feature h3 { margin: 0 0 6px; font-size: 17px; color: var(--ink); letter-spacing: -0.01em; }
+  .feature p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  /* Steps */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 880px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    position: relative; padding: 26px 22px 22px;
+    border: 1px solid var(--border); border-radius: 14px;
+    background: var(--panel); box-shadow: var(--shadow-sm);
+  }
+  .step-num {
+    position: absolute; top: -14px; left: 22px;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--ink); color: #ffffff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+    box-shadow: 0 4px 10px rgba(10, 31, 23, 0.2);
+  }
+  .step h4 { margin: 8px 0 6px; font-size: 16px; color: var(--ink); letter-spacing: -0.01em; }
+  .step p { margin: 0; color: var(--muted); font-size: 14px; }
+  .step pre {
+    margin: 12px 0 0; background: #0e1a15; padding: 12px 14px;
+    border-radius: 8px; font-size: 12.5px; color: #a7f3d0;
+    border: 1px solid #1a2e25; overflow-x: auto;
+  }
+
+  /* Footer CTA */
+  .cta-band {
+    max-width: 1120px; margin: 40px auto 0; padding: 56px 24px;
+    text-align: center;
+    border: 1px solid #1a2e25; border-radius: 20px;
+    background:
+      radial-gradient(700px 240px at 50% 0%, rgba(37, 211, 102, 0.18), transparent 70%),
+      linear-gradient(180deg, #0e1a15 0%, #0a1511 100%);
+    color: #ffffff;
+    box-shadow: var(--shadow-lg);
+  }
+  .cta-band h2 { font-size: clamp(28px, 4vw, 40px); margin: 0 0 12px; color: #ffffff; letter-spacing: -0.02em; font-weight: 800; }
+  .cta-band p { color: #7fae95; margin: 0 0 28px; font-size: 17px; }
+  .cta-band .btn-primary { background: #25d366; color: #041910; }
+  .cta-band .btn-primary:hover { background: #34e07a; }
+
+  footer { padding: 40px 24px 32px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--ink-2); font-weight: 500; }
+
+  /* Selection */
+  ::selection { background: var(--green-soft); color: var(--green-strong); }
+  /* Scrollbar inside code panels */
+  .code-panel pre::-webkit-scrollbar, .contrib pre::-webkit-scrollbar, .step pre::-webkit-scrollbar { height: 8px; }
+  .code-panel pre::-webkit-scrollbar-thumb, .contrib pre::-webkit-scrollbar-thumb, .step pre::-webkit-scrollbar-thumb { background: #1a2e25; border-radius: 4px; }
+
+  /* Code section */
+  .code-wrap { max-width: 920px; margin: 0 auto; }
+  .tabs {
+    display: flex; gap: 4px; padding: 6px;
+    background: #0e1a15; border: 1px solid #1a2e25;
+    border-radius: 14px 14px 0 0; border-bottom: none;
+    overflow-x: auto;
+  }
+  .tab {
+    flex: 1; min-width: 0;
+    background: transparent; color: #7fae95; border: none;
+    padding: 10px 14px; border-radius: 8px;
+    cursor: pointer; font: 500 12.5px 'JetBrains Mono', monospace;
+    white-space: nowrap; transition: background 0.2s, color 0.2s;
+  }
+  .tab:hover { color: #e8fff4; }
+  .tab.active { background: rgba(37, 211, 102, 0.16); color: #a7f3d0; }
+  .code-panel {
+    background: #0a1511; border: 1px solid #1a2e25; border-top: none;
+    border-radius: 0 0 14px 14px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--shadow-md);
+  }
+  .code-panel pre {
+    margin: 0; padding: 22px;
+    background: transparent !important;
+    font-size: 13.5px; line-height: 1.65;
+    overflow-x: auto;
+  }
+  .code-panel pre code { background: transparent !important; font-family: 'JetBrains Mono', monospace; }
+  .code-copy {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(255, 255, 255, 0.06); color: #a7f3d0;
+    border: 1px solid #1a2e25;
+    padding: 6px 12px; font-size: 11px; border-radius: 6px;
+    cursor: pointer; font-family: 'JetBrains Mono', monospace; font-weight: 500;
+    transition: color 0.15s, background 0.15s;
+  }
+  .code-copy:hover { background: rgba(37, 211, 102, 0.18); color: #ffffff; }
+  .code-pane { display: none; }
+  .code-pane.active { display: block; }
+  .code-caption { text-align: center; color: var(--muted); font-size: 13px; margin-top: 16px; }
+  .code-caption .mono { color: var(--green-strong); background: var(--green-soft); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; }
+
+  /* Contribute band */
+  .contrib {
+    display: grid; grid-template-columns: 1.2fr 1fr; gap: 36px; align-items: center;
+    padding: 40px; border: 1px solid var(--border); border-radius: 18px;
+    background: var(--panel);
+    box-shadow: var(--shadow-sm);
+    margin-top: 20px;
+  }
+  @media (max-width: 880px) { .contrib { grid-template-columns: 1fr; padding: 24px; } }
+  .contrib h3 { margin: 0 0 10px; font-size: 26px; letter-spacing: -0.02em; color: var(--ink); }
+  .contrib p { margin: 0 0 18px; color: var(--muted); }
+  .contrib ul { margin: 0; padding-left: 20px; color: var(--ink-2); font-size: 14.5px; }
+  .contrib ul li { margin: 6px 0; }
+  .contrib ul li::marker { color: var(--green); }
+  .contrib pre {
+    margin: 0; padding: 18px; background: #0e1a15; border: 1px solid #1a2e25;
+    border-radius: 12px; font-size: 13px; overflow-x: auto; color: #a7f3d0;
+    font-family: 'JetBrains Mono', monospace; line-height: 1.65;
+  }
+
+  /* Use cases */
+  .uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 880px) { .uses { grid-template-columns: 1fr; } }
+  .use {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    position: relative; overflow: hidden;
+  }
+  .use:hover { border-color: var(--green); transform: translateY(-3px); box-shadow: var(--shadow-md); }
+  .use::before {
+    content: attr(data-num);
+    position: absolute; top: 14px; right: 18px;
+    font: 700 42px 'JetBrains Mono', monospace;
+    color: var(--green-soft); letter-spacing: -0.03em;
+    pointer-events: none;
+  }
+  .use h3 { margin: 0 0 8px; font-size: 17px; color: var(--ink); letter-spacing: -0.01em; max-width: 85%; }
+  .use p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .use .tag {
+    display: inline-block; margin-bottom: 10px;
+    padding: 3px 9px; border-radius: 999px;
+    font: 600 11px 'JetBrains Mono', monospace;
+    background: var(--green-soft); color: var(--green-strong);
+    letter-spacing: 0.02em;
+  }
+
+  .anti {
+    margin-top: 24px; padding: 18px 22px;
+    background: #fff8f1; border: 1px solid #f5d9bd; border-radius: 12px;
+    display: flex; gap: 14px; align-items: flex-start;
+    font-size: 14.5px; color: #7a4a1a;
+  }
+  .anti .ico { font-size: 20px; line-height: 1; margin-top: 1px; }
+  .anti strong { color: #5a3410; }
+
+  /* Contributors */
+  .contributors {
+    display: flex; flex-wrap: wrap; gap: 16px; justify-content: center;
+    margin-top: 12px;
+  }
+  .contributor {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 20px 14px 14px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: var(--shadow-sm);
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    text-decoration: none; color: inherit;
+    min-width: 260px;
+  }
+  .contributor:hover {
+    border-color: var(--green); transform: translateY(-2px);
+    box-shadow: var(--shadow-md); text-decoration: none;
+  }
+  .contributor img {
+    width: 48px; height: 48px; border-radius: 50%;
+    border: 2px solid var(--border);
+  }
+  .contributor .name { font-weight: 700; color: var(--ink); font-size: 15px; letter-spacing: -0.01em; }
+  .contributor .handle { color: var(--muted); font-size: 13px; font-family: 'JetBrains Mono', monospace; }
+  .contributor .commits {
+    margin-left: auto; padding: 3px 10px;
+    background: var(--green-soft); color: var(--green-strong);
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .contrib-note { text-align: center; color: var(--muted); font-size: 14px; margin-top: 20px; }
+  .contrib-note a { color: var(--green-strong); font-weight: 600; }
+
+  /* Stars badge row */
+  .badges { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 24px; }
+  .badge-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel);
+    color: var(--muted); font-size: 13px;
+    box-shadow: var(--shadow-sm);
+  }
+  .badge-pill strong { color: var(--ink); font-weight: 600; }
+
+  /* reveal defaults (pre-animation) */
+  .reveal { opacity: 0; transform: translateY(24px); }
+  .fade-in { opacity: 0; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>wa-tui</span>
+    </div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#use-cases">Use cases</a>
+      <a href="#code">Code</a>
+      <a href="#install">Install</a>
+      <a href="#contributors">Contributors</a>
+      <a href="https://github.com/gtchakama/wa-tui" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <a class="nav-cta" href="#install">Get started</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-grid">
+    <div>
+      <span class="eyebrow reveal"><span class="pulse"></span> v1.7.0 · open source · MIT-friendly</span>
+      <h1 class="hero-title">
+        <span class="line">Chat on WhatsApp</span><br />
+        <span class="line">without leaving <span class="grad">your shell.</span></span>
+      </h1>
+      <p class="hero-sub reveal">
+        A fast, keyboard-driven TUI for WhatsApp Web. Live next to <span class="mono">vim</span> and <span class="mono">tmux</span> — not in another Electron window eating your RAM.
+      </p>
+      <div class="cta-row reveal">
+        <a class="btn btn-primary" href="#install">
+          <span>Get started</span>
+          <span aria-hidden="true">→</span>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/gtchakama/wa-tui" target="_blank" rel="noopener">
+          <span aria-hidden="true">★</span>
+          <span>Star on GitHub</span>
+        </a>
+      </div>
+      <div class="install reveal">
+        <code id="install-cmd"><span class="prompt">$</span>npm i -g @gtchakama/wa-tui</code>
+        <button class="copy-btn" id="copy-btn" aria-label="Copy install command">Copy</button>
+      </div>
+    </div>
+
+    <div class="terminal fade-in" id="terminal">
+      <div class="term-bar">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="term-title mono">~ wa-tui</span>
+      </div>
+      <div class="term-body">
+        <div class="term-layout">
+          <div class="chat-list">
+            <div class="pane-title">Chats</div>
+            <div class="chat-row anim-chat active"><span>Mom</span><span class="badge">2</span></div>
+            <div class="chat-row anim-chat"><span>Dev team</span><span class="badge">5</span></div>
+            <div class="chat-row anim-chat"><span>Alex</span></div>
+            <div class="chat-row anim-chat"><span>Book club</span></div>
+            <div class="chat-row anim-chat"><span>Lunch crew</span></div>
+          </div>
+          <div class="chat-view">
+            <div class="pane-title">Mom</div>
+            <div class="msg anim-msg"><span class="name">Mom</span>are you eating properly?</div>
+            <div class="msg anim-msg"><span class="name">Mom</span>send a picture of dinner 🍲</div>
+            <div class="msg me anim-msg">yes mom, promise 🥦</div>
+            <div class="msg anim-msg"><span class="name">Mom</span>good. love you ❤️</div>
+            <div class="typing-line mono" id="typing"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="section" id="features">
+  <div class="section-head">
+    <h2 class="reveal">Everything you need. Nothing you don't.</h2>
+    <p class="reveal">Every feature earns its keybinding.</p>
+  </div>
+  <div class="features">
+    <div class="feature reveal">
+      <div class="icon">⌨</div>
+      <h3>Keyboard-first by design</h3>
+      <p><span class="mono">j</span>/<span class="mono">k</span> to move, <span class="mono">⏎</span> to open, <span class="mono">Ctrl+K</span> to search. Your hands never leave home row.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="icon">⚡</div>
+      <h3>Lightweight &amp; native</h3>
+      <p>Pure Node + <span class="mono">neo-blessed</span>. Boots in under a second. No Electron, no fan noise.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="icon">🔎</div>
+      <h3>Fuzzy finder everywhere</h3>
+      <p>One modal. Search across all chats or scope to the current thread's history. Incremental, case-insensitive.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="icon">📎</div>
+      <h3>Media, saved to <span class="mono">$PWD</span></h3>
+      <p>Images, voice notes, documents — downloaded straight into your working directory. Ready for <span class="mono">scp</span> or <span class="mono">mv</span>.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="icon">🎨</div>
+      <h3>Themeable palettes</h3>
+      <p>Press <span class="mono">F2</span> to preview live. Settings persist under <span class="mono">~/.wa-tui/</span>. Matches your dotfiles, not the other way round.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="icon">📱</div>
+      <h3>QR pairing, inline</h3>
+      <p>The QR renders in the terminal itself — ASCII or kitty graphics if your emulator supports it. Zero browser tabs.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="install">
+  <div class="section-head">
+    <h2 class="reveal">From zero to chatting in under a minute</h2>
+    <p class="reveal">Needs Node 18+ and Chrome (or Chromium) on <span class="mono">PATH</span>.</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal">
+      <div class="step-num">1</div>
+      <h4>Install it</h4>
+      <p>One global install via npm. Homebrew tap also available.</p>
+      <pre class="mono">$ npm i -g @gtchakama/wa-tui</pre>
+    </div>
+    <div class="step reveal">
+      <div class="step-num">2</div>
+      <h4>Launch it</h4>
+      <p>Run from the directory where you want session files stored.</p>
+      <pre class="mono">$ wa-tui</pre>
+    </div>
+    <div class="step reveal">
+      <div class="step-num">3</div>
+      <h4>Pair &amp; chat</h4>
+      <p>Phone → Linked devices → scan. Persists across reboots.</p>
+      <pre class="mono">↑↓ browse  ⏎ open  Ctrl+K find</pre>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="use-cases">
+  <div class="section-head">
+    <h2 class="reveal">Where it shines</h2>
+    <p class="reveal">Honest about what it's for. (And what it isn't.)</p>
+  </div>
+
+  <div class="uses">
+    <div class="use reveal" data-num="01">
+      <span class="tag">flow</span>
+      <h3>Stay in flow while coding</h3>
+      <p>A ping lands, you glance a pane over, reply, and you're back in vim. No Alt-Tab into a 500MB chat app, no phone pickup that turns into 20 min of scrolling.</p>
+    </div>
+    <div class="use reveal" data-num="02">
+      <span class="tag">ssh</span>
+      <h3>Remote boxes &amp; SSH sessions</h3>
+      <p>Runs happily on a dev server or VPS. Read WhatsApp wherever you have a shell — handy when your phone is across the room or locked in a drawer.</p>
+    </div>
+    <div class="use reveal" data-num="03">
+      <span class="tag">low-spec</span>
+      <h3>Old laptops &amp; Pis</h3>
+      <p>No Electron, no persistent browser window. Boots in under a second and idles cheap on hardware that Slack would melt.</p>
+    </div>
+    <div class="use reveal" data-num="04">
+      <span class="tag">$PWD</span>
+      <h3>Media straight to your project</h3>
+      <p>Downloads land in the current working directory. <span class="mono">cd</span> into a repo, grab the asset a client sent, and it's already next to your code. No Downloads graveyard.</p>
+    </div>
+    <div class="use reveal" data-num="05">
+      <span class="tag">focus</span>
+      <h3>Distraction-minimized chat</h3>
+      <p>No stories, no status, no ads, no nudges. Just text and a keyboard. The UI has nothing to sell you, so it doesn't try.</p>
+    </div>
+    <div class="use reveal" data-num="06">
+      <span class="tag">j/k/⏎</span>
+      <h3>For keyboard purists</h3>
+      <p>If you already think in <span class="mono">j/k/⏎/Ctrl+K</span>, this is the fastest WhatsApp client you'll ever use. Fuzzy-find across all chats + current thread beats scrolling, every time.</p>
+    </div>
+  </div>
+
+  <div class="anti reveal">
+    <span class="ico">⚠️</span>
+    <div>
+      <strong>Not the right fit for:</strong> video calls, sticker bombing, status browsing.
+      Use your phone for those — wa-tui is for people whose WhatsApp is mostly <em>text with a handful of people</em>,
+      and who want that to stop interrupting their terminal.
+    </div>
+  </div>
+</section>
+
+<section class="section" id="code">
+  <div class="section-head">
+    <h2 class="reveal">Readable code. Honest abstractions.</h2>
+    <p class="reveal">Plain Node. No build step. Every file does one thing and does it clearly.</p>
+  </div>
+
+  <div class="code-wrap reveal">
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="t-run" role="tab">$ run it locally</button>
+      <button class="tab" data-tab="t-events" role="tab">whatsapp/service.js</button>
+      <button class="tab" data-tab="t-install" role="tab">browser bootstrap</button>
+      <button class="tab" data-tab="t-keys" role="tab">keybindings</button>
+    </div>
+
+    <div class="code-panel">
+      <button class="code-copy" data-copy-target="#t-run code">Copy</button>
+
+      <div class="code-pane active" id="t-run">
+<pre><code class="language-bash"># Clone, install, run — that's the whole dev loop
+git clone https://github.com/gtchakama/wa-tui.git
+cd wa-tui
+pnpm install          # or: npm install
+pnpm start            # scans QR, drops you into the TUI
+
+# Run the test suite
+node --test</code></pre>
+      </div>
+
+      <div class="code-pane" id="t-events">
+<pre><code class="language-javascript">// src/whatsapp/service.js — every phase is an event you can hook
+this.client.on('qr', (qr) =&gt; {
+  this.emit('lifecycle', { phase: 'qr' });
+  this.emit('qr', qr);
+});
+
+this.client.on('loading_screen', (percent, message) =&gt; {
+  this.emit('lifecycle', { phase: 'syncing', percent, message });
+});
+
+this.client.on('ready', () =&gt; {
+  this.emit('lifecycle', { phase: 'ready' });
+});
+
+this.client.on('auth_failure', (msg) =&gt; {
+  this.emit('lifecycle', { phase: 'auth_failure', message: msg });
+});</code></pre>
+      </div>
+
+      <div class="code-pane" id="t-install">
+<pre><code class="language-javascript">// First-run Chrome install with live progress — no silent hangs
+async function installBrowser(onProgress) {
+  cleanStaleChromeCache();
+  const { install, detectBrowserPlatform, Browser } = require('@puppeteer/browsers');
+  const { PUPPETEER_REVISIONS } = require('puppeteer-core/lib/cjs/puppeteer/revisions.js');
+
+  await install({
+    browser: Browser.CHROME,
+    buildId: PUPPETEER_REVISIONS.chrome,
+    platform: detectBrowserPlatform(),
+    cacheDir: path.join(os.homedir(), '.cache', 'puppeteer'),
+    downloadProgressCallback: (downloaded, total) =&gt; {
+      if (total &gt; 0) onProgress(Math.round((downloaded / total) * 100));
+    },
+  });
+}</code></pre>
+      </div>
+
+      <div class="code-pane" id="t-keys">
+<pre><code class="language-javascript">// Vim-flavored keybindings everywhere. Want your own? PRs welcome.
+screen.key(['j', 'down'],  () =&gt; chatList.down(1));
+screen.key(['k', 'up'],    () =&gt; chatList.up(1));
+screen.key(['enter'],      () =&gt; openChat(chatList.selected));
+screen.key(['C-k', '/'],   () =&gt; openFuzzyFinder());
+screen.key(['1', '2', '3'], (ch) =&gt; filter(ch));  // all / DMs / groups
+screen.key(['F2'],         () =&gt; openPaletteSettings());
+screen.key(['q', 'C-c'],   () =&gt; process.exit(0));</code></pre>
+      </div>
+    </div>
+    <p class="code-caption">Actual code from <span class="mono">main</span>. No transpilation, no pseudocode.</p>
+  </div>
+</section>
+
+<section class="section" id="contribute">
+  <div class="section-head">
+    <h2 class="reveal">Your weekend project, basically</h2>
+    <p class="reveal">A few thousand lines of JavaScript. No TypeScript build. No webpack. No drama.</p>
+  </div>
+
+  <div class="contrib reveal">
+    <div>
+      <h3>Small repo, big impact</h3>
+      <p>The surface area is tiny — a feature PR lands in days, not months. Great first open source contribution if you've been looking for one.</p>
+      <ul>
+        <li>Add a new theme to the palette picker</li>
+        <li>Extend the fuzzy finder with date or sender filters</li>
+        <li>Swap in a different desktop-notification backend</li>
+        <li>Improve inline media rendering (kitty graphics already wired)</li>
+        <li>Write a test — the suite runs on plain <span class="mono">node --test</span></li>
+      </ul>
+    </div>
+    <div>
+<pre><span style="color:#7fae95"># fork → branch → ship</span>
+gh repo fork gtchakama/wa-tui --clone
+cd wa-tui
+git checkout -b feat/my-idea
+
+pnpm install
+pnpm start         <span style="color:#7fae95"># try it live</span>
+node --test        <span style="color:#7fae95"># keep the suite green</span>
+
+gh pr create --fill</pre>
+    </div>
+  </div>
+
+  <div class="badges">
+    <span class="badge-pill">⭐ <strong>Star it</strong> to help others find it</span>
+    <span class="badge-pill">🐛 <strong>File issues</strong> — bugs, ideas, either works</span>
+    <span class="badge-pill">🔀 <strong>Send PRs</strong> — reviewed within days</span>
+  </div>
+</section>
+
+<section class="section" id="contributors">
+  <div class="section-head">
+    <h2 class="reveal">Built by humans</h2>
+    <p class="reveal">Two contributors, many late nights, equal commits.</p>
+  </div>
+
+  <div class="contributors">
+    <a class="contributor reveal" href="https://github.com/gtchakama" target="_blank" rel="noopener">
+      <img src="https://github.com/gtchakama.png?size=96" alt="George T Chakama avatar" loading="lazy" />
+      <div>
+        <div class="name">George T Chakama</div>
+        <div class="handle">@gtchakama · creator</div>
+      </div>
+    </a>
+    <a class="contributor reveal" href="https://github.com/iamngoni" target="_blank" rel="noopener">
+      <img src="https://github.com/iamngoni.png?size=96" alt="Ngonidzashe Mangudya avatar" loading="lazy" />
+      <div>
+        <div class="name">Ngonidzashe Mangudya</div>
+        <div class="handle">@iamngoni · maintainer</div>
+      </div>
+    </a>
+  </div>
+
+  <p class="contrib-note reveal">
+    Want your avatar on this page? <a href="https://github.com/gtchakama/wa-tui/pulls" target="_blank" rel="noopener">Send a PR</a>
+    — first-time contributors especially welcome.
+  </p>
+</section>
+
+<section class="section">
+  <div class="cta-band reveal">
+    <h2>Made in the terminal, for the terminal.</h2>
+    <p>Open source under ISC. If it saves you from one Electron app, consider starring it.</p>
+    <a class="btn btn-primary" href="https://github.com/gtchakama/wa-tui" target="_blank" rel="noopener">
+      <span aria-hidden="true">★</span>
+      <span>Star on GitHub</span>
+      <span aria-hidden="true">→</span>
+    </a>
+  </div>
+</section>
+
+<footer>
+  <p>Built by <a href="https://github.com/gtchakama" target="_blank" rel="noopener">@gtchakama</a> · ISC License</p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+<script>
+(function () {
+  gsap.registerPlugin(ScrollTrigger);
+
+  // Hero title lines slide up
+  gsap.from('.hero-title .line', {
+    yPercent: 110,
+    duration: 0.9,
+    ease: 'power4.out',
+    stagger: 0.08,
+    delay: 0.1,
+  });
+
+  // Hero reveal items
+  gsap.to('.hero .reveal', {
+    opacity: 1,
+    y: 0,
+    duration: 0.7,
+    ease: 'power3.out',
+    stagger: 0.1,
+    delay: 0.3,
+  });
+
+  // Terminal entrance
+  gsap.fromTo('#terminal',
+    { opacity: 0, y: 30, scale: 0.97, rotateX: 8 },
+    { opacity: 1, y: 0, scale: 1, rotateX: 0, duration: 1, ease: 'power3.out', delay: 0.35 }
+  );
+
+  // Chat rows cascade in
+  gsap.from('.anim-chat', {
+    opacity: 0, x: -16, duration: 0.5, ease: 'power2.out',
+    stagger: 0.08, delay: 1.0,
+  });
+
+  // Messages cascade in
+  gsap.from('.anim-msg', {
+    opacity: 0, y: 10, duration: 0.5, ease: 'power2.out',
+    stagger: 0.12, delay: 1.3,
+  });
+
+  // Typing loop
+  const typingEl = document.getElementById('typing');
+  const phrases = [
+    'Mom is typing…',
+    'Mom is recording voice…',
+    'Mom is typing…',
+  ];
+  let i = 0;
+  function cycleTyping() {
+    const text = phrases[i % phrases.length];
+    i++;
+    typingEl.innerHTML = '';
+    const obj = { n: 0 };
+    gsap.to(obj, {
+      n: text.length,
+      duration: text.length * 0.04,
+      ease: 'none',
+      onUpdate: () => {
+        typingEl.innerHTML = text.slice(0, Math.floor(obj.n)) + '<span class="caret"></span>';
+      },
+      onComplete: () => {
+        gsap.delayedCall(1.5, () => {
+          gsap.to(typingEl, {
+            opacity: 0, duration: 0.3,
+            onComplete: () => {
+              typingEl.style.opacity = 1;
+              cycleTyping();
+            }
+          });
+        });
+      }
+    });
+  }
+  gsap.delayedCall(2.2, cycleTyping);
+
+  // Scroll-triggered reveals for sections
+  gsap.utils.toArray('.section .reveal').forEach((el) => {
+    gsap.to(el, {
+      opacity: 1, y: 0,
+      duration: 0.7, ease: 'power3.out',
+      scrollTrigger: { trigger: el, start: 'top 85%' },
+    });
+  });
+
+  // Brand dot subtle float
+  gsap.to('.brand-dot', {
+    y: -2, repeat: -1, yoyo: true, duration: 1.2, ease: 'sine.inOut',
+  });
+
+  // Copy install command
+  const copyBtn = document.getElementById('copy-btn');
+  const cmdEl = document.getElementById('install-cmd');
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(cmdEl.textContent.trim());
+      const original = copyBtn.textContent;
+      copyBtn.textContent = 'Copied!';
+      gsap.fromTo(copyBtn, { scale: 1 }, { scale: 1.08, duration: 0.15, yoyo: true, repeat: 1 });
+      setTimeout(() => (copyBtn.textContent = original), 1400);
+    } catch (_) { /* ignore */ }
+  });
+
+  // Feature card hover tilt
+  document.querySelectorAll('.feature').forEach((card) => {
+    card.addEventListener('mouseenter', () => {
+      gsap.to(card, { y: -4, duration: 0.25, ease: 'power2.out' });
+    });
+    card.addEventListener('mouseleave', () => {
+      gsap.to(card, { y: 0, duration: 0.3, ease: 'power2.out' });
+    });
+  });
+
+  // Hide title line initially (so GSAP yPercent trick reads cleanly)
+  document.querySelectorAll('.hero-title .line').forEach((el) => {
+    el.style.display = 'inline-block';
+    el.style.overflow = 'hidden';
+  });
+
+  // Code tabs
+  const tabs = document.querySelectorAll('.tab');
+  const panes = document.querySelectorAll('.code-pane');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      tabs.forEach((t) => t.classList.remove('active'));
+      panes.forEach((p) => p.classList.remove('active'));
+      tab.classList.add('active');
+      const pane = document.getElementById(target);
+      pane.classList.add('active');
+      // Animate new pane in
+      gsap.fromTo(pane,
+        { opacity: 0, y: 8 },
+        { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }
+      );
+      // Also animate copy button target
+      const copyBtn = document.querySelector('.code-copy');
+      if (copyBtn) copyBtn.dataset.copyTarget = '#' + target + ' code';
+    });
+  });
+
+  // Code copy
+  const codeCopy = document.querySelector('.code-copy');
+  if (codeCopy) {
+    codeCopy.addEventListener('click', async () => {
+      const sel = codeCopy.dataset.copyTarget;
+      const el = document.querySelector(sel);
+      if (!el) return;
+      try {
+        await navigator.clipboard.writeText(el.innerText.trim());
+        const original = codeCopy.textContent;
+        codeCopy.textContent = 'Copied!';
+        gsap.fromTo(codeCopy, { scale: 1 }, { scale: 1.08, duration: 0.15, yoyo: true, repeat: 1 });
+        setTimeout(() => (codeCopy.textContent = original), 1400);
+      } catch (_) { /* ignore */ }
+    });
+  }
+
+  // Scroll-reveal the code panel
+  gsap.from('.code-panel', {
+    opacity: 0, y: 24, duration: 0.7, ease: 'power3.out',
+    scrollTrigger: { trigger: '.code-panel', start: 'top 85%' },
+  });
+
+  // Use-case cards lift hover
+  document.querySelectorAll('.use').forEach((card) => {
+    card.addEventListener('mouseenter', () => gsap.to(card, { y: -4, duration: 0.25, ease: 'power2.out' }));
+    card.addEventListener('mouseleave', () => gsap.to(card, { y: 0, duration: 0.3, ease: 'power2.out' }));
+  });
+
+  // Contributor cards gentle entrance
+  gsap.from('.contributor', {
+    opacity: 0, y: 20, duration: 0.6, ease: 'power3.out', stagger: 0.12,
+    scrollTrigger: { trigger: '.contributors', start: 'top 85%' },
+  });
+})();
+</script>
+</body>
+</html>
