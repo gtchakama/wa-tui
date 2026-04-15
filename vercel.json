@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "echo 'Static docs: skipping dependency install'",
+  "buildCommand": "rm -rf public && mkdir -p public && cp -R docs/. public/",
+  "outputDirectory": "public"
+}
